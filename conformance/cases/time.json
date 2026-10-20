@@ -38,7 +38,7 @@
     {"name": "time now equals now", "query": {"equals": [{"time": "now"}, {"now": null}]}, "expect": true},
     {"name": "now is the pinned clock", "query": {"to_string": {"now": null}}, "expect": "2020-09-13T12:26:40Z"},
     {"name": "now non-null", "query": {"now": 1}, "error": {"code": "invalid argument", "description": "Null expected, Integer provided.", "position": ["now"]}},
-    {"name": "time renders as @ts", "query": {"time": "2019-05-27T05:15:48Z"}, "expect": {"@ts": "2019-05-27T05:15:48Z"}, "todo": "wire.rs renders @ts with a fixed 9-digit fraction; Fauna renders Instant.toString (fraction in groups of 3, omitted when zero)"},
+    {"name": "time renders as @ts", "query": {"time": "2019-05-27T05:15:48Z"}, "expect": {"@ts": "2019-05-27T05:15:48Z"}},
     {"name": "epoch overflow", "query": {"epoch": 9223372036854775807, "unit": "day"}, "error": {"code": "invalid argument", "description": "dates and times must be between -1000000000-01-01T00:00:00Z and +1000000000-12-31T23:59:59.999999999Z", "position": []}},
     {"name": "epoch bad unit", "query": {"epoch": 0, "unit": "picosecond"}, "error": {"code": "invalid argument", "description": "Time Unit expected, String provided.", "position": ["unit"]}},
     {"name": "epoch non-string unit", "query": {"epoch": 0, "unit": 1}, "error": {"code": "invalid argument", "description": "Time Unit expected, Integer provided.", "position": ["unit"]}},
