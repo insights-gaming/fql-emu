@@ -34,6 +34,8 @@
     { "name": "contains_value object", "query": { "contains_value": 1, "in": { "object": { "a": 1 } } }, "expect": true },
     { "name": "bare lambda is not a form", "query": { "lambda": "x", "expr": { "var": "x" } }, "error": { "code": "invalid expression", "description": "No form/function found, or invalid argument keys: { lambda, expr }.", "position": [] } },
     { "name": "query wraps a lambda into a @query value", "query": { "query": { "lambda": "x", "expr": { "var": "x" } } }, "expect": { "@query": { "lambda": "x", "expr": { "var": "x" }, "api_version": "4" } } },
+    { "name": "@query literal without api_version is 2.12", "query": { "@query": { "lambda": "x", "expr": { "var": "x" } } }, "expect": { "@query": { "lambda": "x", "expr": { "var": "x" }, "api_version": "2.12" } }, "todo": "emulator: a `@query` literal without `api_version` gets \"4\"; the server defaults it to \"2.12\"" },
+    { "name": "@query literal keeps its api_version", "query": { "@query": { "lambda": "x", "expr": { "var": "x" }, "api_version": "4" } }, "expect": { "@query": { "lambda": "x", "expr": { "var": "x" }, "api_version": "4" } } },
     { "name": "call function", "query": { "call": { "function": "double" }, "arguments": 21 }, "expect": 42 },
     { "name": "call by name", "query": { "call": "double", "arguments": 2 }, "expect": 4 },
     { "name": "call wraps errors", "query": { "call": { "function": "fail" }, "arguments": [] }, "error": { "code": "call error", "description": "Calling the function resulted in an error.", "position": [], "cause": [{ "code": "transaction aborted", "description": "nope", "position": ["expr"] }] } },
