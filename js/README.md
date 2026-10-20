@@ -121,10 +121,39 @@ FAUNA_ENDPOINT=http://localhost:8443 FAUNA_SECRET=secret npm run differential [-
 ```
 
 This replays every `conformance/cases/*.json` suite against a real endpoint
-(one child database per suite) and against the emulator, and prints the
-mismatches. It exits 1 on any mismatch, and 0 with a notice when the env vars
-are unset. It is not part of `npm test`. The header of `src/differential.ts`
-explains how it normalises timestamps and ids.
+and against the emulator, classifies every case, prints per-suite counts and
+the unclassified mismatches, and (for a full run) writes
+`conformance/DIFFERENTIAL.md`. It exits 1 only on unclassified mismatches,
+and 0 with a notice when the env vars are unset. It is not part of `npm test`.
+Node 18+; the whole corpus takes about 10 s against a local container.
+
+- **Isolation.** Like the Rust harness, every case sees a pristine copy of
+  the suite's state: it runs in a fresh child database seeded with `schema`,
+  `documents` and `setup` (pure, read-only cases share a seeded database).
+  The secret must be able to create databases (an admin key, or the
+  container's root key `secret`).
+- **Fixtures.** `documents` are replayed with `Create(Ref(Collection(c), id), ...)`,
+  one transaction per distinct `ts`, so relative timestamps survive but
+  absolute ones do not.
+- **Numbers.** Case files and both answers are handled as lossless JSON
+  (`src/ljson.ts`): `9223372036854775807` stays exact and `1` != `1.0`.
+- **Normalisation.** `ts` fields, `@ts` values and snowflake ids are
+  masked. Cases whose emulator answer changes when the clock, the id seed or
+  fixture timestamps move are skipped with that reason.
+
+Each case ends up as one of:
+
+| | |
+|---|---|
+| agree | emulator, server and the case expectation agree |
+| todo | the case has a `todo` (an emulator bug; by convention `"emulator: <reason>"`), the expectation matches the server and only the emulator differs |
+| skipped | expects `not emulated` / `emulator limit exceeded`, depends on the clock, ids or fixture timestamps, or has `"skip_differential": "<reason>"` |
+| mismatch | anything else, **including an expectation the server disagrees with**: fix the expectation (edit the JSON textually so `2.0` stays `2.0`), and mark the case `todo` if the emulator then fails it |
+
+`--probe <suite> '<query>' ...` runs raw wire-format queries in one database
+seeded like `<suite>`, on both sides, and prints both answers; useful when
+classifying a mismatch. The header of `src/differential.ts` lists the other
+environment knobs.
 
 ## Building
 
