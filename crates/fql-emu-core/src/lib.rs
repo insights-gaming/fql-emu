@@ -102,38 +102,15 @@ impl Emulator {
     /// Run one query (one transaction) against the store. Writes are
     /// committed only if the whole query succeeds.
     pub fn query(&mut self, expr: &Json) -> Response {
-        let mut working = self.db.clone();
-        let ts = working.clock.next();
-        let (result, wrote) = {
-            let mut ctx = eval::Ctx::new(&mut working, ts);
-            let r = eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root());
-            (r, ctx.wrote)
-        };
+        let (result, ts, wrote) = self.transact(expr);
         match result {
-            Ok(v) => {
-                if working.mode.is_read_only() {
-                    // Every write path has already refused, so the working
-                    // copy differs only in clock and id counter; keep just
-                    // those so a shared instance is provably unchanged.
-                    self.db.clock = working.clock;
-                    self.db.next_id = working.next_id;
-                } else {
-                    working.commit_pending();
-                    self.db = working;
-                }
-                Response {
-                    // The server answers 201 when the transaction wrote.
-                    status: if wrote { 201 } else { 200 },
-                    body: json!({ "resource": wire::encode(&v) }),
-                    txn_time_micros: Some(ts.micros()),
-                }
-            }
-            Err(errs) => {
-                // Keep the clock moving so a failed write still advances time
-                // the way a real transaction attempt would.
-                self.db.clock = working.clock;
-                Response { txn_time_micros: Some(ts.micros()), ..error_response(errs) }
-            }
+            Ok(v) => Response {
+                // The server answers 201 when the transaction wrote.
+                status: if wrote { 201 } else { 200 },
+                body: json!({ "resource": wire::encode(&v) }),
+                txn_time_micros: Some(ts.micros()),
+            },
+            Err(errs) => Response { txn_time_micros: Some(ts.micros()), ..error_response(errs) },
         }
     }
 
@@ -147,17 +124,40 @@ impl Emulator {
 
     /// Evaluate and return the value (for Rust-side tests).
     pub fn eval(&mut self, expr: &Json) -> error::R<Value> {
+        self.transact(expr).0
+    }
+
+    /// One transaction: the result, its timestamp and whether it wrote.
+    /// The clock advances even when the query fails, the way a real
+    /// transaction attempt would.
+    fn transact(&mut self, expr: &Json) -> (error::R<Value>, Timestamp, bool) {
+        let ts = self.db.clock.next();
+        if self.db.mode.is_read_only() {
+            // Every write path refuses before touching the store, so a
+            // read-only query evaluates in place: no copy, and only the id
+            // counter can move (`NewId()`), which a failed query rolls back.
+            let next_id = self.db.next_id;
+            let r = {
+                let mut ctx = eval::Ctx::new(&mut self.db, ts);
+                eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root())
+            };
+            debug_assert!(self.db.pending.is_empty(), "read-only query staged a write");
+            if r.is_err() {
+                self.db.next_id = next_id;
+            }
+            return (r, ts, false);
+        }
         let mut working = self.db.clone();
-        let ts = working.clock.next();
-        let r = {
+        let (r, wrote) = {
             let mut ctx = eval::Ctx::new(&mut working, ts);
-            eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root())
+            let r = eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root());
+            (r, ctx.wrote)
         };
         if r.is_ok() {
             working.commit_pending();
             self.db = working;
         }
-        r
+        (r, ts, wrote)
     }
 
     /// Load a schema bundle: `{"collections": [params...], "indexes":
@@ -168,11 +168,6 @@ impl Emulator {
     /// `{"@ref": ...}`).
     pub fn load_schema(&mut self, bundle: &Json) -> Result<(), Vec<FaunaError>> {
         let pos = Position::root();
-        // Schema is loaded into the writable base before forking; a read-only
-        // copy is exactly what the server-readonly key would answer.
-        if self.db.mode.is_read_only() {
-            return Err(vec![FaunaError::permission_denied(&pos)]);
-        }
         // Schema is loaded into the writable base before forking; a read-only
         // copy is exactly what the server-readonly key would answer.
         if self.db.mode.is_read_only() {
@@ -352,6 +347,27 @@ mod tests {
         q(&mut f, json!({"create_collection": {"object": {"name": "b"}}}));
         assert_eq!(base.db.collections.len(), 1);
         assert_eq!(f.db.collections.len(), 2);
+    }
+
+    #[test]
+    fn read_only_queries_move_only_the_clock_and_id_counter() {
+        let mut base = Emulator::new();
+        base.set_next_id(100);
+        q(&mut base, json!({"create_collection": {"object": {"name": "a"}}}));
+        let mut ro = base.fork_as(Mode::ReadOnly);
+        let new_id = json!({"new_id": null});
+        // A failed query rolls back the ids it minted, as a discarded copy did.
+        let r = ro.query(&json!({"do": [new_id, {"abort": "x"}]}));
+        assert_eq!(r.status, 400);
+        assert_eq!(ro.db.next_id, base.db.next_id);
+        let r = ro.query(&json!({"create_collection": {"object": {"name": "b"}}}));
+        assert_eq!(r.status, 403);
+        assert_eq!(r.body["errors"][0]["code"], "permission denied");
+        assert_eq!(ro.query(&new_id).status, 200);
+        assert_eq!(ro.db.next_id, base.db.next_id + 1);
+        assert!(ro.db.clock.clone().next().micros() > base.db.clock.clone().next().micros());
+        assert_eq!(ro.db.collections.len(), 1);
+        assert!(ro.db.pending.is_empty());
     }
 
     #[test]

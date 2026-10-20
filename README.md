@@ -6,7 +6,8 @@ drop-in shim for the `faunadb` JS driver's `Client.query`.
 
 > **This is not a database. Do not benchmark it.**
 >
-> Indexes are brute-force scans. Every transaction clones the whole store.
+> Indexes are brute-force scans. Every writable transaction clones the whole
+> store.
 > There is a hard cap on the number of documents (default 5 000) and the
 > emulator throws `emulator limit exceeded` when a test seeds more. It exists
 > so that query *logic* can be tested quickly, in parallel, deterministically,
@@ -32,7 +33,9 @@ drop-in shim for the `faunadb` JS driver's `Client.query`.
   Fauna's `permission denied` (403) exactly where the server would, while
   reads keep working. A fresh emulator is always writable; the seeded base
   is forked once, and that one read-only copy can be shared by every test
-  that only reads, since nothing can change it. `fork('read-only-pure-calls')`
+  that only reads, since nothing can change it. Read-only queries also run
+  against the store in place, without the per-query copy, so their cost no
+  longer grows with the fixture. `fork('read-only-pure-calls')`
   is the same but lets tests call UDFs that do not write.
 - Loads a **schema bundle**: one JSON file listing the collections, indexes,
   functions and roles a test database should start with, each written as

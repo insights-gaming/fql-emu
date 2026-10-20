@@ -130,7 +130,9 @@ Two reasons to use a read-only fork:
   the same failures in tests.
 - A suite that only reads can share **one** fork instead of forking per
   test: nothing can change a read-only instance, so there is nothing to
-  isolate, and the per-test copy is skipped entirely.
+  isolate, and the per-test copy is skipped entirely. Read-only queries
+  also skip the copy a writable query makes of the whole store, so each
+  costs the same however large the fixture is.
 
 ```ts
 const base = createEmulator()

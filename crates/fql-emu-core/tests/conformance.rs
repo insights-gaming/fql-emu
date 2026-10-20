@@ -86,7 +86,8 @@ fn run_suite(path: &PathBuf) -> Outcome {
         }
     }
 
-    if suite.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false) {
+    let read_only = suite.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false);
+    if read_only {
         base = base.fork_as(Mode::ReadOnly);
     }
 
@@ -98,6 +99,11 @@ fn run_suite(path: &PathBuf) -> Outcome {
         let todo = case.get("todo").is_some();
         let mut emu = base.fork();
         let resp = emu.query(case.get("query").unwrap_or(&Json::Null));
+        // Read-only queries evaluate in place, so a write that slipped past
+        // its permission check would change the shared instance.
+        if read_only {
+            assert_eq!(stored_state(&emu), stored_state(&base), "{}: read-only query changed the store", label);
+        }
 
         let result: Result<(), String> = if let Some(expect) = case.get("expect") {
             if resp.status >= 400 {
@@ -201,4 +207,13 @@ fn conformance_cases() {
     if !failures.is_empty() {
         panic!("{} conformance failures:\n{}", failures.len(), failures.join("\n"));
     }
+}
+
+/// Everything a query could change apart from the clock and id counter.
+fn stored_state(e: &Emulator) -> String {
+    let db = &e.db;
+    format!(
+        "{:?}",
+        (&db.collections, &db.indexes, &db.functions, &db.roles, &db.documents, &db.pending, db.doc_count, &db.identity)
+    )
 }

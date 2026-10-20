@@ -40,10 +40,19 @@ Stored UDF bodies are closures over the empty env. `MAX_STACK_DEPTH` = 200.
 ## Store
 
 `store::Database` is plain `BTreeMap`/`IndexMap` data. A fork is a clone.
-Each query clones the database and commits the clone on success; this is
-O(size of fixture) per query, which is fine by design (small fixtures, hard
-cap). If this ever matters, switch to persistent maps (`im`), not to a real
-storage engine.
+Each writable query clones the database and commits the clone on success;
+this is O(size of fixture) per query, which is fine by design (small
+fixtures, hard cap). If this ever matters, switch to persistent maps (`im`),
+not to a real storage engine.
+
+A read-only query (`Mode::ReadOnly`, `Mode::ReadOnlyPureCalls`) skips the
+copy and evaluates against the database in place (`Emulator::transact`).
+That is sound because every mutation in `eval/` sits behind
+`deny_if_read_only`, which fails before anything is staged; the only state
+a read can move is the clock and the `NewId()` counter, and a failed query
+restores the counter, so it ends exactly as a discarded copy would. The
+conformance runner checks after every case of a `read_only` suite that the
+stored data is unchanged, in case a new write path forgets its check.
 
 Schema objects (collections, indexes, functions, roles) are parsed into
 typed definitions at create time and rendered back into the document shape
