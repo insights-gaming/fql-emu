@@ -269,31 +269,50 @@ pub fn ref_at_path(r: &Ref, path: &[PathElem]) -> Option<Value> {
 
 /// `ReadAdaptor.select`: `all` collects every match when wildcards are
 /// involved; without wildcards it wraps the single result in an array.
-fn do_select(container: &Value, path: &[PathElem], all: bool, default: Option<Value>, pos: &Position) -> R<Value> {
+/// Looks up `path` in `container`. `None` means the path is missing
+/// (only possible without `all`; with `all` a miss is an empty array).
+fn select_lookup(container: &Value, path: &[PathElem], all: bool) -> Option<Value> {
     // Fast path for `Select(["data"], page)`.
     if let (Value::Page { data, .. }, [PathElem::Key(k)]) = (container, path) {
         if k == "data" {
-            return Ok(Value::Array(data.clone()));
+            return Some(Value::Array(data.clone()));
         }
     }
     if let (Value::Page { data, .. }, [PathElem::Key(k), rest @ ..]) = (container, path) {
         if k == "data" && !rest.is_empty() {
-            return do_select(&Value::Array(data.clone()), rest, all, default, pos);
+            return select_lookup(&Value::Array(data.clone()), rest, all);
         }
     }
     if !all {
-        match value_at_path(container, path).map(Cow::into_owned).or(default) {
-            Some(v) => Ok(v),
-            None => one(FaunaError::value_not_found(path, pos)),
-        }
+        value_at_path(container, path).map(Cow::into_owned)
     } else {
         // `valueAtPath0(all = true)`: arrays along the path are traversed
         // and the matches concatenated (the index `select_as_index` rule).
-        Ok(match super::sets::select_all(container, path) {
+        Some(match super::sets::select_all(container, path) {
             Some(Value::Array(a)) => Value::Array(a),
             Some(v) => Value::Array(vec![v]),
             None => Value::Array(vec![]),
         })
+    }
+}
+
+/// The server evaluates `default` lazily: only when the path is missing.
+/// So `Select(0, [1], Abort("x"))` is `1`, not an abort.
+fn do_select(
+    ctx: &mut Ctx,
+    env: &Env,
+    args: &Args,
+    from: &Value,
+    path: &[PathElem],
+    all: bool,
+    pos: &Position,
+) -> R<Value> {
+    if let Some(v) = select_lookup(from, path, all) {
+        return Ok(v);
+    }
+    match args.eval_opt(ctx, env, "default", pos)? {
+        Some(v) => Ok(v),
+        None => one(FaunaError::value_not_found(path, &pos.key("from"))),
     }
 }
 
@@ -305,24 +324,21 @@ fn select(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         Some(v) => cast::boolean(&v, &pos.key("all"))?,
         None => false,
     };
-    let default = args.eval_opt(ctx, env, "default", pos)?;
-    do_select(&from, &path, all, default, &pos.key("from"))
+    do_select(ctx, env, args, &from, &path, all, pos)
 }
 
 fn select_all(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "select_all", pos)?;
     let path = cast::path(&path_v, &pos.key("select_all"))?;
     let from = args.eval(ctx, env, "from", pos)?;
-    let default = args.eval_opt(ctx, env, "default", pos)?;
-    do_select(&from, &path, true, default, &pos.key("from"))
+    do_select(ctx, env, args, &from, &path, true, pos)
 }
 
 fn select_as_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "select_as_index", pos)?;
     let path = cast::path(&path_v, &pos.key("select_as_index"))?;
     let from = args.eval(ctx, env, "from", pos)?;
-    let default = args.eval_opt(ctx, env, "default", pos)?;
-    do_select(&from, &path, true, default, &pos.key("from"))
+    do_select(ctx, env, args, &from, &path, true, pos)
 }
 
 fn contains_path(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
