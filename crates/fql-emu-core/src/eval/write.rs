@@ -258,7 +258,7 @@ fn document_fields(ctx: &Ctx, coll: &str, prev: &Object, params: &Object, vpos: 
     // `Create(ref, { data: {} })`, or an `Update` that removes every field,
     // `Get` has no `data` at all. Nested empty objects are kept.
     if matches!(fields.get("data"), Some(Value::Object(o)) if o.is_empty()) {
-        fields.remove("data");
+        fields.shift_remove("data");
     }
     // `UserDocumentWriteConfig.adjustTTL`: the collection TTL applies when
     // the document has none.
