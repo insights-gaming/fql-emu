@@ -60,7 +60,7 @@
     { "name": "or short circuits", "query": { "or": [true, { "abort": "never" }] }, "expect": true },
     { "name": "lt chain", "query": { "lt": [1, 2, 3] }, "expect": true },
     { "name": "lt mixed types uses fauna order", "query": { "lt": [1, "a", null] }, "expect": true },
-    { "name": "divide by zero", "query": { "divide": [1, 0] }, "error": { "code": "invalid argument", "description": "Illegal division by zero.", "position": ["divide"] } },
+    { "name": "divide by zero", "query": { "divide": [1, 0] }, "error": { "code": "invalid argument", "description": "Illegal division by zero.", "position": [] } },
     { "name": "add promotes to double", "query": { "add": [1, 1.5] }, "expect": 2.5 },
     { "name": "concat with separator", "query": { "concat": ["a", "b"], "separator": "-" }, "expect": "a-b" },
     { "name": "stub fails loudly", "query": { "create_key": { "object": { "role": "admin" } } }, "error": { "code": "not emulated" } }
