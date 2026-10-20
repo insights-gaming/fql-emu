@@ -1,0 +1,9 @@
+target/
+node_modules/
+js/dist/
+js/wasm/*.wasm
+js/wasm/*.js
+js/wasm/*.d.ts
+!js/wasm/.gitkeep
+!js/wasm/package.json
+*.log

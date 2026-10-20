@@ -1,0 +1,32 @@
+{
+  "name": "@insights/fql-emu",
+  "version": "0.1.0",
+  "description": "FQL v4 query emulator (Rust/wasm) with a drop-in faunadb Client.query shim for fast unit tests. Not a database.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "wasm"],
+  "scripts": {
+    "build:wasm": "bash ../scripts/build-wasm.sh",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "faunadb": ">=4.0.0"
+  },
+  "devDependencies": {
+    "faunadb": "^4.8.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}
