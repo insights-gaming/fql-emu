@@ -119,8 +119,23 @@ pub struct RoleDef {
     pub fields: Object,
 }
 
+/// A schema object created in the current transaction. The server does not
+/// resolve such names until the transaction commits (`CreateCollection`
+/// followed by `Collection("x")` in the same query is `invalid ref`), so
+/// creations are parked here and applied by `commit_pending`.
+#[derive(Clone, Debug)]
+pub enum PendingSchema {
+    Collection(CollectionDef),
+    Index(IndexDef),
+    Function(FunctionDef),
+    Role(RoleDef),
+}
+
 #[derive(Clone, Debug)]
 pub struct Database {
+    /// Schema objects created in the current transaction, invisible to name
+    /// resolution until `commit_pending`.
+    pub pending: Vec<PendingSchema>,
     pub collections: IndexMap<String, CollectionDef>,
     pub indexes: IndexMap<String, IndexDef>,
     pub functions: IndexMap<String, FunctionDef>,
@@ -182,6 +197,7 @@ pub fn ir_type_name(v: &Value) -> &'static str {
 impl Database {
     pub fn new() -> Database {
         Database {
+            pending: Vec::new(),
             collections: IndexMap::new(),
             indexes: IndexMap::new(),
             functions: IndexMap::new(),
@@ -198,6 +214,37 @@ impl Database {
 
     pub fn fork(&self) -> Database {
         self.clone()
+    }
+
+    /// Apply the schema objects created in this transaction. Called on
+    /// commit; a failed transaction drops the working copy, pending and all.
+    pub fn commit_pending(&mut self) {
+        for p in std::mem::take(&mut self.pending) {
+            match p {
+                PendingSchema::Collection(c) => {
+                    self.collections.insert(c.name.clone(), c);
+                }
+                PendingSchema::Index(i) => {
+                    self.indexes.insert(i.name.clone(), i);
+                }
+                PendingSchema::Function(f) => {
+                    self.functions.insert(f.name.clone(), f);
+                }
+                PendingSchema::Role(r) => {
+                    self.roles.insert(r.name.clone(), r);
+                }
+            }
+        }
+    }
+
+    fn pending_has(&self, kind: &str, name: &str) -> bool {
+        self.pending.iter().any(|p| match (kind, p) {
+            ("collection", PendingSchema::Collection(c)) => c.name == name,
+            ("index", PendingSchema::Index(i)) => i.name == name,
+            ("function", PendingSchema::Function(f)) => f.name == name,
+            ("role", PendingSchema::Role(r)) => r.name == name,
+            _ => false,
+        })
     }
 
     pub fn new_id(&mut self) -> String {
@@ -437,7 +484,7 @@ impl Database {
     /// `CreateCollection(params)`.
     pub fn create_collection(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.collections.contains_key(&name) {
+        if self.collections.contains_key(&name) || self.pending_has("collection", &name) {
             return one(FaunaError::native_already_exists("Collection", pos));
         }
         let history_days = Self::opt_long(params, "history_days", pos)?;
@@ -452,7 +499,7 @@ impl Database {
             data: params.get("data").cloned(),
         };
         let rendered = self.render_collection(&def);
-        self.collections.insert(name, def);
+        self.pending.push(PendingSchema::Collection(def));
         Ok(rendered)
     }
 
@@ -594,7 +641,7 @@ impl Database {
     /// has no build phase.
     pub fn create_index(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.indexes.contains_key(&name) {
+        if self.indexes.contains_key(&name) || self.pending_has("index", &name) {
             return one(FaunaError::native_already_exists("Index", pos));
         }
         let source = Self::parse_sources(params.get("source"), pos)?;
@@ -603,9 +650,13 @@ impl Database {
                 if !self.collections.contains_key(c) {
                     return one(FaunaError::validation_failed(
                         vec![ValidationFailure {
-                            field: vec!["source".into()],
+                            field: {
+                                let mut f: Vec<String> = pos.0.iter().map(|e| match e { crate::error::PosElem::Index(i) => i.to_string(), crate::error::PosElem::Key(k) => k.clone() }).collect();
+                                f.push("source".into());
+                                f
+                            },
                             code: "invalid reference".into(),
-                            description: "Reference was not found.".into(),
+                            description: "Cannot read reference.".into(),
                         }],
                         pos,
                     ));
@@ -631,14 +682,14 @@ impl Database {
             source_value: params.get("source").cloned().unwrap_or(Value::Null),
         };
         let rendered = self.render_index(&def);
-        self.indexes.insert(name, def);
+        self.pending.push(PendingSchema::Index(def));
         Ok(rendered)
     }
 
     /// `CreateFunction(params)`.
     pub fn create_function(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.functions.contains_key(&name) {
+        if self.functions.contains_key(&name) || self.pending_has("function", &name) {
             return one(FaunaError::native_already_exists("Function", pos));
         }
         let body = match params.get("body") {
@@ -678,7 +729,7 @@ impl Database {
             data: params.get("data").cloned(),
         };
         let rendered = self.render_function(&def);
-        self.functions.insert(name, def);
+        self.pending.push(PendingSchema::Function(def));
         Ok(rendered)
     }
 
@@ -686,7 +737,7 @@ impl Database {
     /// emulator runs every query with admin privileges.
     pub fn create_role(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.roles.contains_key(&name) {
+        if self.roles.contains_key(&name) || self.pending_has("role", &name) {
             return one(FaunaError::native_already_exists("Role", pos));
         }
         let mut fields = Object::new();
@@ -697,7 +748,7 @@ impl Database {
         }
         let def = RoleDef { name: name.clone(), ts, fields };
         let rendered = self.render_role(&def);
-        self.roles.insert(name, def);
+        self.pending.push(PendingSchema::Role(def));
         Ok(rendered)
     }
 }

@@ -1869,6 +1869,7 @@ mod tests {
         let ts = crate::value::Timestamp::of_micros(7);
         let pos = Position::root();
         db.create_collection(&obj(vec![("name", Value::str("users"))]), ts, &pos).unwrap();
+        db.commit_pending();
         db.create_index(
             &obj(vec![
                 ("name", Value::str("idx")),
@@ -1880,6 +1881,7 @@ mod tests {
             &pos,
         )
         .unwrap();
+        db.commit_pending();
         let idx = db.indexes["idx"].clone();
         let data = Value::obj(vec![
             ("tags", Value::Array(vec![Value::str("a"), Value::str("a"), Value::str("b")])),

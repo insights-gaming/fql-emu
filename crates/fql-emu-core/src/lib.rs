@@ -92,6 +92,7 @@ impl Emulator {
         };
         match result {
             Ok(v) => {
+                working.commit_pending();
                 self.db = working;
                 Response {
                     // The server answers 201 when the transaction wrote.
@@ -126,6 +127,7 @@ impl Emulator {
             eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root())
         };
         if r.is_ok() {
+            working.commit_pending();
             self.db = working;
         }
         r
@@ -166,6 +168,8 @@ impl Emulator {
                         "create_function" => self.db.create_function(&params, ts, &p)?,
                         _ => self.db.create_index(&params, ts, &p)?,
                     };
+                    // A bundle is not a transaction: make each object visible at once.
+                    self.db.commit_pending();
                 }
             }
         }
