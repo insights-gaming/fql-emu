@@ -898,15 +898,7 @@ fn flatten_into(items: Vec<Value>, out: &mut Vec<Value>) {
 /// path (or at its end) are traversed and their results concatenated.
 pub fn select_all(v: &Value, path: &[PathElem]) -> Option<Value> {
     match v {
-        Value::Ref(r) => match path {
-            [] => Some(v.clone()),
-            [PathElem::Key(k), rest @ ..] if k == "class" || k == "collection" => {
-                let coll = r.collection.as_deref()?.clone();
-                select_all(&Value::Ref(coll), rest)
-            }
-            [PathElem::Key(k)] if k == "id" => Some(Value::String(r.id.clone())),
-            _ => None,
-        },
+        Value::Ref(r) => super::basic::ref_at_path(r, path),
         Value::Array(items) => match path {
             [PathElem::Index(i), rest @ ..] => {
                 let item = items.get(usize::try_from(*i).ok()?)?;

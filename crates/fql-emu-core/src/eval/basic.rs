@@ -13,6 +13,7 @@ use super::{apply_lambda, call_function, eval, eval_lambda_arg, json_type, Ctx, 
 use crate::error::{one, FaunaError, Position, R};
 use crate::value::{Object, Ref, Type, Value};
 use serde_json::Value as Json;
+use std::borrow::Cow;
 
 pub fn register(r: &mut Registry) {
     r.stub("at", &["at", "expr"], &[]);
@@ -221,11 +222,12 @@ fn equals(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 
 /// Walk a path into a container. `None` when the path is absent.
 /// A page behaves like `{before?, after?, data: [...]}`.
-pub fn value_at_path<'v>(container: &'v Value, path: &[PathElem]) -> Option<&'v Value> {
+pub fn value_at_path<'v>(container: &'v Value, path: &[PathElem]) -> Option<Cow<'v, Value>> {
     let mut cur = container;
     let mut i = 0;
     while i < path.len() {
         cur = match (cur, &path[i]) {
+            (Value::Ref(r), _) => return ref_at_path(r, &path[i..]).map(Cow::Owned),
             (Value::Object(o), PathElem::Key(k)) => o.get(k)?,
             (Value::Array(a), PathElem::Index(ix)) => a.get(usize::try_from(*ix).ok()?)?,
             (Value::Page { data, before, after }, PathElem::Key(k)) => match k.as_str() {
@@ -246,7 +248,23 @@ pub fn value_at_path<'v>(container: &'v Value, path: &[PathElem]) -> Option<&'v 
         };
         i += 1;
     }
-    Some(cur)
+    Some(Cow::Borrowed(cur))
+}
+
+/// The ref arm of `ReadAdaptor.valueAtPath0`: `class`/`collection` step
+/// into the ref's collection ref, and a final `id` is the id string (the
+/// name for schema refs). `database` is always absent because scoped refs
+/// are not emulated, and `ref`/`ts`/`data` only resolve from API
+/// version Unstable on.
+pub fn ref_at_path(r: &Ref, path: &[PathElem]) -> Option<Value> {
+    match path {
+        [] => Some(Value::Ref(r.clone())),
+        [PathElem::Key(k), rest @ ..] if k == "class" || k == "collection" => {
+            ref_at_path(r.collection.as_deref()?, rest)
+        }
+        [PathElem::Key(k)] if k == "id" => Some(Value::String(r.id.clone())),
+        _ => None,
+    }
 }
 
 /// `ReadAdaptor.select`: `all` collects every match when wildcards are
@@ -264,7 +282,7 @@ fn do_select(container: &Value, path: &[PathElem], all: bool, default: Option<Va
         }
     }
     if !all {
-        match value_at_path(container, path).cloned().or(default) {
+        match value_at_path(container, path).map(Cow::into_owned).or(default) {
             Some(v) => Ok(v),
             None => one(FaunaError::value_not_found(path, pos)),
         }
