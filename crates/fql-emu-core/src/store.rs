@@ -36,6 +36,7 @@ pub enum Clock {
 }
 
 impl Clock {
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Timestamp {
         match self {
             Clock::Fixed(t) => *t,
@@ -158,6 +159,26 @@ pub const RESERVED_NAMES: &[&str] = &[
     "access_providers",
 ];
 
+/// Storage type name of a value (`fauna.storage.ir.IRType`), as used in
+/// validation-failure descriptions ("Invalid type Long, expected type
+/// Map."). Objects are `Map`, lambdas are `Query`.
+pub fn ir_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "Null",
+        Value::Bool(_) => "Boolean",
+        Value::Long(_) => "Long",
+        Value::Double(_) => "Double",
+        Value::String(_) => "String",
+        Value::Bytes(_) => "Bytes",
+        Value::Time(_) => "Time",
+        Value::Date(_) => "Date",
+        Value::Ref(_) => "Ref",
+        Value::Lambda(_) => "Query",
+        Value::Array(_) => "Array",
+        Value::Object(_) | Value::Page { .. } | Value::Set(_) => "Map",
+    }
+}
+
 impl Database {
     pub fn new() -> Database {
         Database {
@@ -206,6 +227,12 @@ impl Database {
         }
         coll.insert(id.to_string(), doc);
         Ok(())
+    }
+
+    /// Insert a document directly, bypassing write validation (fixtures and
+    /// tests). A thin wrapper over `put_document`.
+    pub fn seed_document(&mut self, collection: &str, id: &str, fields: Object, ts: Timestamp, pos: &Position) -> R<()> {
+        self.put_document(collection, id, Document { ts, fields }, pos)
     }
 
     pub fn remove_document(&mut self, collection: &str, id: &str) -> Option<Document> {
@@ -367,7 +394,7 @@ impl Database {
                     return one(FaunaError::validation_failed(
                         vec![ValidationFailure {
                             field: vec!["name".into()],
-                            code: "invalid name".into(),
+                            code: "reserved name".into(),
                             description: format!(
                                 "Invalid name {}. Reserved names: {}.",
                                 s,
@@ -382,7 +409,7 @@ impl Database {
             Some(Value::String(_)) | None => one(FaunaError::validation_failed(
                 vec![ValidationFailure {
                     field: vec!["name".into()],
-                    code: "missing value".into(),
+                    code: "value required".into(),
                     description: "Required value not found.".into(),
                 }],
                 pos,
@@ -391,7 +418,7 @@ impl Database {
                 vec![ValidationFailure {
                     field: vec!["name".into()],
                     code: "invalid type".into(),
-                    description: format!("Invalid type {}, expected type String.", other.rtype()),
+                    description: format!("Invalid type {}, expected type String.", ir_type_name(other)),
                 }],
                 pos,
             )),
@@ -406,7 +433,7 @@ impl Database {
                 vec![ValidationFailure {
                     field: vec![key.into()],
                     code: "invalid type".into(),
-                    description: format!("Invalid type {}, expected type Long.", other.rtype()),
+                    description: format!("Invalid type {}, expected type Long.", ir_type_name(other)),
                 }],
                 pos,
             )),
@@ -444,13 +471,13 @@ impl Database {
         let items: Vec<&Value> = match v {
             None | Some(Value::Null) => return Ok(vec![]),
             Some(Value::Array(a)) => a.iter().collect(),
-            Some(other) => return one(fail(format!("Invalid type {}, expected type Array.", other.rtype()))),
+            Some(other) => return one(fail(format!("Invalid type {}, expected type Array.", ir_type_name(other)))),
         };
         let mut out = Vec::with_capacity(items.len());
         for it in items {
             let o = match it {
                 Value::Object(o) => o,
-                other => return one(fail(format!("Invalid type {}, expected type Object.", other.rtype()))),
+                other => return one(fail(format!("Invalid type {}, expected type Map.", ir_type_name(other)))),
             };
             let reverse = matches!(o.get("reverse"), Some(Value::Bool(true)));
             let path = if let Some(Value::String(b)) = o.get("binding") {
@@ -466,7 +493,7 @@ impl Database {
                                 other => {
                                     return one(fail(format!(
                                         "Invalid type {}, expected type Long or String.",
-                                        other.rtype()
+                                        ir_type_name(other)
                                     )))
                                 }
                             }
@@ -478,7 +505,7 @@ impl Database {
                         return one(FaunaError::validation_failed(
                             vec![ValidationFailure {
                                 field: vec![key.into()],
-                                code: "missing value".into(),
+                                code: "value required".into(),
                                 description: "Must provide one of the following: field, binding".into(),
                             }],
                             pos,
@@ -503,7 +530,7 @@ impl Database {
                 return one(FaunaError::validation_failed(
                     vec![ValidationFailure {
                         field: vec!["source".into()],
-                        code: "missing value".into(),
+                        code: "value required".into(),
                         description: "Required value not found.".into(),
                     }],
                     pos,
@@ -516,7 +543,7 @@ impl Database {
             match v {
                 Value::Ref(r) if r.is_collection_ref() => Ok(SourceCollection::Collection(r.id.clone())),
                 Value::String(s) if s == "_" => Ok(SourceCollection::Wildcard),
-                other => one(fail(format!("Invalid type {}, expected type Collection Ref.", other.rtype()))),
+                other => one(fail(format!("Invalid type {}, expected type Collection Ref.", ir_type_name(other)))),
             }
         };
         let mut out = Vec::with_capacity(items.len());
@@ -529,7 +556,7 @@ impl Database {
                             return one(FaunaError::validation_failed(
                                 vec![ValidationFailure {
                                     field: vec!["source".into(), "collection".into()],
-                                    code: "missing value".into(),
+                                    code: "value required".into(),
                                     description: "Required value not found.".into(),
                                 }],
                                 pos,
@@ -546,7 +573,7 @@ impl Database {
                                 other => {
                                     return one(fail(format!(
                                         "Invalid type {}, expected type Lambda for binding '{}'.",
-                                        other.rtype(),
+                                        ir_type_name(other),
                                         k
                                     )))
                                 }
@@ -619,7 +646,7 @@ impl Database {
                     vec![ValidationFailure {
                         field: vec!["body".into()],
                         code: "invalid type".into(),
-                        description: format!("Invalid type {}, expected type Lambda.", other.rtype()),
+                        description: format!("Invalid type {}, expected type Lambda.", ir_type_name(other)),
                     }],
                     pos,
                 ))
@@ -628,7 +655,7 @@ impl Database {
                 return one(FaunaError::validation_failed(
                     vec![ValidationFailure {
                         field: vec!["body".into()],
-                        code: "missing value".into(),
+                        code: "value required".into(),
                         description: "Required value not found.".into(),
                     }],
                     pos,
