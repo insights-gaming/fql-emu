@@ -1,9 +1,6 @@
 target/
 node_modules/
 js/dist/
-js/wasm/*.wasm
-js/wasm/*.js
-js/wasm/*.d.ts
-!js/wasm/.gitkeep
-!js/wasm/package.json
+# js/wasm/ holds the committed release build of the emulator (scripts/build-wasm.sh,
+# verified by scripts/check-wasm-fresh.sh) so TypeScript contributors need no Rust toolchain.
 *.log
