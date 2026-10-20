@@ -109,11 +109,18 @@ section. Read it before touching the interpreter.
 
 ## Conformance
 
-`conformance/cases/*.json` hold wire-format query/expectation pairs ported
-from Fauna's own API specs (`ext/api/src/test/scala/queries/*Spec.scala`).
-They run in `cargo test` against the emulator, and the same files can be
-replayed against a real `fauna/faunadb` container by the differential runner
-to catch drift. Every fixed fidelity bug should add a case.
+`conformance/cases/*.json` hold about 1 650 wire-format query/expectation
+pairs ported from Fauna's own API specs
+(`ext/api/src/test/scala/queries/*Spec.scala`) and from probing a real
+`fauna/faunadb` container. They run in `cargo test` against the emulator,
+and `cd js && npm run differential` replays them against a real container
+(`FAUNA_ENDPOINT`/`FAUNA_SECRET`), classifying every mismatch; the latest
+report is `conformance/DIFFERENTIAL.md`. Cases marked `todo` are the known
+gaps listed in `docs/gaps.md`. Every fixed fidelity bug should add a case.
+
+Coverage: 218 of the 233 v4 forms are implemented; the 15 stubs are auth,
+keys, child databases, history/temporal reads and `At`, all of which fail
+with a `not emulated` error.
 
 ## Licence
 

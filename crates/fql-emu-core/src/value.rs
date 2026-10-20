@@ -252,6 +252,12 @@ pub struct Lambda {
     pub body: Rc<serde_json::Value>,
     pub env: Env,
     pub pos: crate::error::Position,
+    /// `APIVersion` the lambda was parsed under: `"4"` for lambdas written
+    /// in a v4 query (inline forms, `Query(..)`), or the `api_version` of a
+    /// `@query` literal, which defaults to `"2.12"` (`LambdaDefaultVersion`)
+    /// when omitted. Rendered back verbatim; bodies are evaluated with v4
+    /// semantics regardless (see docs/gaps.md).
+    pub api_version: String,
 }
 
 impl PartialEq for Lambda {

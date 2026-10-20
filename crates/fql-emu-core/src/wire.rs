@@ -129,7 +129,11 @@ pub fn decode_pattern(v: &Json, pos: &Position) -> R<Pattern> {
         Json::Array(items) => {
             let mut ps = Vec::with_capacity(items.len());
             for (i, it) in items.iter().enumerate() {
-                ps.push(decode_pattern(it, &pos.idx(i))?);
+                match it {
+                    Json::String(s) if s == "_" => ps.push(Pattern::Ignore),
+                    Json::String(s) => ps.push(Pattern::Name(s.clone())),
+                    _ => return one(FaunaError::invalid_lambda_expr(&pos.idx(i))),
+                }
             }
             Ok(Pattern::Array(ps))
         }
@@ -158,6 +162,10 @@ pub fn decode_lambda(v: &Json, pos: &Position) -> R<Lambda> {
         body: Rc::new(body.clone()),
         env: Env::empty(),
         pos: pos.clone(),
+        api_version: match o.get("api_version") {
+            Some(Json::String(v)) => v.clone(),
+            _ => "2.12".to_string(),
+        },
     })
 }
 
@@ -287,7 +295,7 @@ pub fn encode_ref(r: &Ref) -> Json {
 }
 
 pub fn encode_lambda(l: &Lambda) -> Json {
-    json!({ "@query": { "lambda": l.params.to_json(), "expr": (*l.body).clone(), "api_version": "4" } })
+    json!({ "@query": { "lambda": l.params.to_json(), "expr": (*l.body).clone(), "api_version": l.api_version } })
 }
 
 fn encode_set_body(s: &SetExpr) -> Json {

@@ -14,7 +14,7 @@
     { "name": "map array", "query": { "map": { "lambda": "x", "expr": { "add": [{ "var": "x" }, 1] } }, "collection": [1, 2, 3] }, "expect": [2, 3, 4] },
     { "name": "map empty array", "query": { "map": { "lambda": "x", "expr": { "abort": "never" } }, "collection": [] }, "expect": [] },
     { "name": "map binds pairs positionally", "query": { "map": { "lambda": ["k", "v"], "expr": { "concat": [{ "var": "k" }, { "var": "v" }] } }, "collection": [["a", "1"], ["b", "2"]] }, "expect": ["a1", "b2"] },
-    { "name": "map nested pattern", "query": { "map": { "lambda": ["a", ["b", "c"]], "expr": [{ "var": "c" }, { "var": "b" }, { "var": "a" }] }, "collection": [[1, [2, 3]]] }, "error": { "code": "invalid expression", "description": "String expected, Array provided.", "position": ["map", "lambda", 1] }, "todo": "emulator: accepts a nested array in a lambda parameter pattern; v4 only allows a string or an array of strings" },
+    { "name": "map nested pattern", "query": { "map": { "lambda": ["a", ["b", "c"]], "expr": [{ "var": "c" }, { "var": "b" }, { "var": "a" }] }, "collection": [[1, [2, 3]]] }, "error": { "code": "invalid expression", "description": "String expected, Array provided.", "position": ["map", "lambda", 1] } },
     { "name": "map one-element pattern binds a scalar", "query": { "map": { "lambda": ["x"], "expr": { "var": "x" } }, "collection": [1, 2] }, "expect": [1, 2] },
     { "name": "map ignore pattern", "query": { "map": { "lambda": "_", "expr": 0 }, "collection": [1, 2] }, "expect": [0, 0] },
     { "name": "map closes over let", "query": { "let": [{ "n": 10 }], "in": { "map": { "lambda": "x", "expr": { "add": [{ "var": "x" }, { "var": "n" }] } }, "collection": [1] } }, "expect": [11] },

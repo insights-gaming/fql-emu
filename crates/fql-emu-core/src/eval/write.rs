@@ -22,7 +22,7 @@ use super::forms::{Args, Registry};
 use super::sets;
 use super::{Ctx, Env};
 use crate::error::{one, FaunaError, PosElem, Position, ValidationFailure, R};
-use crate::store::{ir_type_name, Document, IndexDef, SourceCollection};
+use crate::store::{ir_type_name, Document, IndexDef, PendingSchema, SourceCollection};
 use crate::value::{Object, Ref, Timestamp, Type, Value};
 
 pub fn register(r: &mut Registry) {
@@ -542,6 +542,9 @@ fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &P
         let ttl_days = opt_long_field(params, "ttl_days", if partial { cur.ttl_days } else { None }, pos)?;
         let def = crate::store::CollectionDef { name: cur.name.clone(), ts, history_days, ttl_days, data };
         let rendered = ctx.db.render_collection(&def);
+        // Updates to collection/index/role documents are visible to later
+        // reads in the transaction (only function bodies are cached, see
+        // the function branch).
         ctx.db.collections.insert(cur.name, def);
         return Ok(rendered);
     }
@@ -586,7 +589,10 @@ fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &P
         };
         def.ts = ts;
         let rendered = ctx.db.render_function(&def);
-        ctx.db.functions.insert(def.name.clone(), def);
+        // The server resolves UDF bodies from a per-transaction cache taken at
+        // the start: `Do(Update(Function(f), {body}), Call(f, ..))` runs the
+        // old body (verified on the container). Hence pending until commit.
+        ctx.db.pending.push(PendingSchema::Function(def));
         return Ok(rendered);
     }
     if r.is_role_ref() {
@@ -623,33 +629,31 @@ fn delete(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
             Some(d) => Ok(ctx.db.render_document(&coll, &r.id, &d)),
         };
     }
+    // Schema deletes take effect at commit: for the rest of the transaction
+    // the name still resolves and the documents are still readable.
     if r.is_collection_ref() {
-        let def = ctx.db.collections.shift_remove(&r.id).expect("resolved above");
+        let def = ctx.db.collections[&r.id].clone();
         let rendered = ctx.db.render_collection(&def);
-        let ids: Vec<String> = ctx.db.documents_in(&r.id).map(|(i, _)| i.clone()).collect();
-        for id in ids {
-            ctx.db.remove_document(&r.id, &id);
-        }
-        ctx.db.documents.remove(&r.id);
-        // `indexesWithSoleSource`: indexes over only this collection go too.
-        ctx.db.indexes.retain(|_, idx| {
-            let mut sources = idx.source.iter().map(|s| &s.collection);
-            let sole = sources.all(|c| *c == SourceCollection::Collection(r.id.clone()));
-            !sole || idx.source.is_empty()
-        });
+        ctx.db.pending.push(PendingSchema::DeleteCollection(r.id.clone()));
         return Ok(rendered);
     }
     if r.is_index_ref() {
-        let def = ctx.db.indexes.shift_remove(&r.id).expect("resolved above");
-        return Ok(ctx.db.render_index(&def));
+        let def = ctx.db.indexes[&r.id].clone();
+        let rendered = ctx.db.render_index(&def);
+        ctx.db.pending.push(PendingSchema::DeleteIndex(r.id.clone()));
+        return Ok(rendered);
     }
     if r.is_function_ref() {
-        let def = ctx.db.functions.shift_remove(&r.id).expect("resolved above");
-        return Ok(ctx.db.render_function(&def));
+        let def = ctx.db.functions[&r.id].clone();
+        let rendered = ctx.db.render_function(&def);
+        ctx.db.pending.push(PendingSchema::DeleteFunction(r.id.clone()));
+        return Ok(rendered);
     }
     if r.is_role_ref() {
-        let def = ctx.db.roles.shift_remove(&r.id).expect("resolved above");
-        return Ok(ctx.db.render_role(&def));
+        let def = ctx.db.roles[&r.id].clone();
+        let rendered = ctx.db.render_role(&def);
+        ctx.db.pending.push(PendingSchema::DeleteRole(r.id.clone()));
+        return Ok(rendered);
     }
     one(FaunaError::not_emulated(&format!("`Delete` of {}", r.display()), &dp))
 }

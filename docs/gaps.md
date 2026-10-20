@@ -44,6 +44,21 @@ Verify anything in doubt with `npm run differential` against a real
 
 ## Approximations (may differ from the server)
 
+- **Lambda `api_version`**: a bare `@query` literal without `api_version`
+  is tagged `"2.12"` by the server (`LambdaDefaultVersion`) and rendered
+  back that way; the emulator renders it faithfully but **evaluates every
+  lambda with v4 semantics**. A 2.12-tagged body that uses a v3+/v4-only
+  function would fail on the server and succeed here. Store function bodies
+  with `"api_version": "4"` (what `q.Query(q.Lambda(..))` sends) to avoid
+  the question; see `docs/schema-bundle.md`.
+- **Lambdas in set `Filter`/`Join` are parsed lazily**: the server validates
+  the lambda body when the query is parsed, so an unknown form inside a
+  never-evaluated filter lambda is still an error there; the emulator only
+  notices when the set is materialised.
+- **`Range` rendering**: the server renders the bounds of a `Range` set
+  normalised to the set's shape (`null` for `Documents()` sets, the first
+  value for single-value indexes); the emulator echoes the bounds as given.
+
 - **Error positions for lambdas held in variables**: body errors are
   reported at the call site, because a stored `Lambda` records where it
   was parsed, not where a `Var` referenced it.

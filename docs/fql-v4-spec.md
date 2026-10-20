@@ -76,7 +76,7 @@ Spec: [`Expression.scala`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13
 | Date | `{"@date": "2020-01-02"}` | same | |
 | Ref | `{"@ref": {"id": "1", "collection": {"@ref": {"id": "users", "collection": {"@ref": {"id": "collections"}}}}}}` | same | native collections (`collections`, `indexes`, `functions`, `roles`, `databases`, `keys`, `tokens`, `credentials`, `access_providers`) have no parent. `"class"` is accepted as a synonym of `"collection"` on input. `"database"` scopes a ref to a child database. Legacy string form `"collections/users/1"` is also accepted |
 | Set | `{"@set": {"match": <ref>, "terms": [...]}}` | same | an unevaluated set; forms mirror §7 |
-| Lambda (`@query`) | `{"@query": {"lambda": "x", "expr": {...}}}` | `{"@query": {"lambda": ..., "expr": ..., "api_version": "4"}}` | a closed lambda (no free variables); how UDF bodies are stored |
+| Lambda (`@query`) | `{"@query": {"lambda": "x", "expr": {...}, "api_version"?: "4"}}` | `{"@query": {"lambda": ..., "expr": ..., "api_version": "4"}}` | a closed lambda (no free variables); how UDF bodies are stored. A literal without `api_version` is tagged **`"2.12"`** (`APIVersion.LambdaDefaultVersion`); lambdas written in a v4 query (`Query(..)`, inline forms) are `"4"` |
 | Array | `[...]` | `[...]` | elements are *expressions* on input |
 | Object | `{"object": {...}}` on input | plain object, or `{"@obj": {...}}` if any key starts with `@` | a bare object in a query is a **form**, never a literal; the driver wraps literal objects with `object` |
 | Page | (not expressible) | `{"before": [...]?, "after": [...]?, "data": [...]}` | only produced by `Paginate` |
@@ -262,8 +262,20 @@ tests: [`WriteFunctionsSpec.scala`](https://github.com/fauna/faunadb/blob/4f8f8b
   functions `{ref, ts, name, body, role?, data?}`. `history_days` defaults to
   a server config value (`Document.DefaultRetainDays`; the `fauna/faunadb`
   container reports 0); `partitions` is 1 for unique or term-less indexes, else 8.
-- Reserved names (`events`, `sets`, `self`, `documents`, `_`, and the native
-  collection names) fail validation.
+- The only reserved schema name is `_` (`validation failed` /
+  `reserved name`: "Invalid name _. Reserved names: _."); `events`, `self`,
+  `documents` and the native collection names are accepted (verified on the
+  container).
+- **Transaction visibility** (verified on the container): name resolution of
+  schema objects uses the start-of-transaction snapshot, so a collection,
+  index or function created in a transaction is `invalid ref` by name until
+  commit, and `CreateIndex` sourcing a just-created collection fails
+  validation (`Cannot read reference.`). `Exists`/`Get` of a schema ref
+  deleted earlier in the transaction are false/not-found, but its documents
+  stay readable (deletion is asynchronous). A UDF body updated in a
+  transaction is not used by `Call` until commit (bodies are cached per
+  transaction). Documents written in a transaction **are** visible to later
+  reads in it.
 - `NewId()` returns a string of a 64-bit snowflake id. `Now()` /
   `Time("now")` is the transaction snapshot time and is constant for the
   whole query.
@@ -403,7 +415,9 @@ Spec and tests:
   rejects them with "No form/function found". There is no `SplitStr` in v4. Invalid regex →
   `invalid argument: Search pattern /x/ is not a valid regular expression.`
 - **Time**: `Time("now")` = transaction time; `Time(iso)` parses any
-  ISO-8601 instant (`Cannot cast 'x' to a time.` otherwise); `Date("YYYY-MM-DD")`;
+  ISO-8601 instant with a SMART resolver (`2019-02-29T..` clamps to Feb 28,
+  day 32 is `Cannot cast 'x' to a time.`); `Date("YYYY-MM-DD")` is STRICT
+  (`Date("2019-02-29")` is an error);
   `Epoch(n, unit)`; `ToMicros`/`ToMillis`/`ToSeconds`; components
   (`Second` … `Year`, `DayOfWeek` is ISO 1–7); `TimeAdd`/`TimeSubtract`/
   `TimeDiff` on Time or Date with units `day(s)`, `half day(s)`, `hour(s)`,

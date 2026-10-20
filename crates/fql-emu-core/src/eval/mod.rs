@@ -155,7 +155,13 @@ pub fn parse_lambda_expr(env: &Env, expr: &Json, pos: &Position) -> R<Lambda> {
         }
     };
     let pattern = parse_pattern(params, &pos.key("lambda"))?;
-    Ok(Lambda { params: pattern, body: std::rc::Rc::new(body.clone()), env: env.clone(), pos: pos.clone() })
+    Ok(Lambda {
+        params: pattern,
+        body: std::rc::Rc::new(body.clone()),
+        env: env.clone(),
+        pos: pos.clone(),
+        api_version: "4".to_string(),
+    })
 }
 
 fn parse_pattern(v: &Json, pos: &Position) -> R<Pattern> {
@@ -168,7 +174,8 @@ fn parse_pattern(v: &Json, pos: &Position) -> R<Pattern> {
                 match it {
                     Json::String(s) if s == "_" => ps.push(Pattern::Ignore),
                     Json::String(s) => ps.push(Pattern::Name(s.clone())),
-                    Json::Array(_) => ps.push(parse_pattern(it, &pos.idx(i))?),
+                    // `parseLambdaPat`: only strings inside the array; a nested
+                    // array is "String expected, Array provided." at [.., i].
                     other => {
                         let t = json_type(other);
                         return one(FaunaError::invalid_expr_type(&[Type::String], t, &pos.idx(i)));

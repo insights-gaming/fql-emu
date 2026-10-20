@@ -179,7 +179,10 @@ impl<'a> Cursor<'a> {
 
 /// `ISO_LOCAL_DATE` (strict): `yyyy-MM-dd`; years beyond four digits need
 /// a sign.
-fn parse_local_date(c: &mut Cursor) -> Option<(i64, u32, u32)> {
+/// `lenient` is `ResolverStyle.SMART` (what `Timestamp.parse` uses): a day
+/// past the end of the month is clamped (`2019-02-29` -> `02-28`), while a
+/// day above 31 is still an error. `LocalDate.parse` (`Date()`) is STRICT.
+fn parse_local_date(c: &mut Cursor, lenient: bool) -> Option<(i64, u32, u32)> {
     let sign = match c.peek() {
         Some('+') => Some(1),
         Some('-') => Some(-1),
@@ -218,7 +221,14 @@ fn parse_local_date(c: &mut Cursor) -> Option<(i64, u32, u32)> {
         return None;
     }
     let day = c.digits(2)?;
-    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
+    if !(1..=12).contains(&month) || day < 1 || day > 31 {
+        return None;
+    }
+    let max = days_in_month(year, month);
+    if day > max {
+        if lenient {
+            return Some((year, month, max));
+        }
         return None;
     }
     Some((year, month, day))
@@ -228,7 +238,7 @@ fn parse_local_date(c: &mut Cursor) -> Option<(i64, u32, u32)> {
 pub fn parse_java_date(s: &str) -> Option<(i64, u32, u32)> {
     let cs: Vec<char> = s.chars().collect();
     let mut c = Cursor { cs: &cs, i: 0 };
-    let d = parse_local_date(&mut c)?;
+    let d = parse_local_date(&mut c, false)?;
     c.done().then_some(d)
 }
 
@@ -271,7 +281,7 @@ fn parse_offset(c: &mut Cursor) -> Option<i64> {
 pub fn parse_java_instant(s: &str) -> Option<i128> {
     let cs: Vec<char> = s.chars().collect();
     let mut c = Cursor { cs: &cs, i: 0 };
-    let (y, mo, d) = parse_local_date(&mut c)?;
+    let (y, mo, d) = parse_local_date(&mut c, true)?;
     if !c.eat_ci('T') {
         return None;
     }
@@ -836,7 +846,8 @@ mod tests {
         assert_eq!(p("1970-01-01T00:00:00.1Z").as_deref(), Some("1970-01-01T00:00:00.100Z"));
         assert_eq!(p("1970-01-01T00:00:00.0000001Z").as_deref(), Some("1970-01-01T00:00:00.000000100Z"));
         assert_eq!(p("2019-05-27T05:15:48"), None);
-        assert_eq!(p("2019-02-29T00:00:00Z"), None);
+        // SMART resolver: an out-of-range day clamps to the month end.
+        assert_eq!(p("2019-02-29T00:00:00Z").as_deref(), Some("2019-02-28T00:00:00Z"));
         assert_eq!(p("2020-02-29T00:00:00Z").as_deref(), Some("2020-02-29T00:00:00Z"));
         assert_eq!(p("2019-05-27 05:15:48Z"), None);
         assert_eq!(p("2019-05-27T24:00:00Z"), None);

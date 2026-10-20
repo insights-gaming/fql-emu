@@ -125,10 +125,15 @@ pub struct RoleDef {
 /// creations are parked here and applied by `commit_pending`.
 #[derive(Clone, Debug)]
 pub enum PendingSchema {
+    /// Create or update (applied by name, so an update is a replacement).
     Collection(CollectionDef),
     Index(IndexDef),
     Function(FunctionDef),
     Role(RoleDef),
+    DeleteCollection(String),
+    DeleteIndex(String),
+    DeleteFunction(String),
+    DeleteRole(String),
 }
 
 #[derive(Clone, Debug)]
@@ -233,8 +238,46 @@ impl Database {
                 PendingSchema::Role(r) => {
                     self.roles.insert(r.name.clone(), r);
                 }
+                PendingSchema::DeleteCollection(name) => {
+                    self.collections.shift_remove(&name);
+                    if let Some(docs) = self.documents.remove(&name) {
+                        self.doc_count -= docs.len();
+                    }
+                    // `indexesWithSoleSource`: indexes over only this collection go too.
+                    self.indexes.retain(|_, idx| {
+                        let sole = idx.source.iter().all(|s| s.collection == SourceCollection::Collection(name.clone()));
+                        !sole || idx.source.is_empty()
+                    });
+                }
+                PendingSchema::DeleteIndex(name) => {
+                    self.indexes.shift_remove(&name);
+                }
+                PendingSchema::DeleteFunction(name) => {
+                    self.functions.shift_remove(&name);
+                }
+                PendingSchema::DeleteRole(name) => {
+                    self.roles.shift_remove(&name);
+                }
             }
         }
+    }
+
+    /// True if a schema object of this name was deleted earlier in the
+    /// transaction (its name may be reused by a create in the same
+    /// transaction, as on the server).
+    fn pending_deleted(&self, kind: &str, name: &str) -> bool {
+        self.pending.iter().any(|p| match (kind, p) {
+            ("collection", PendingSchema::DeleteCollection(n)) => n == name,
+            // Deleting a collection takes its sole-source indexes with it.
+            ("index", PendingSchema::DeleteCollection(c)) => self.indexes.get(name).is_some_and(|idx| {
+                !idx.source.is_empty()
+                    && idx.source.iter().all(|s| s.collection == SourceCollection::Collection(c.clone()))
+            }),
+            ("index", PendingSchema::DeleteIndex(n)) => n == name,
+            ("function", PendingSchema::DeleteFunction(n)) => n == name,
+            ("role", PendingSchema::DeleteRole(n)) => n == name,
+            _ => false,
+        })
     }
 
     fn pending_has(&self, kind: &str, name: &str) -> bool {
@@ -397,16 +440,30 @@ impl Database {
     /// does not exist. Native-collection refs themselves (e.g.
     /// `Collections()`) are not gettable.
     pub fn get_by_ref(&self, r: &Ref) -> Option<Value> {
+        // A schema document deleted earlier in this transaction is gone for
+        // `Get`/`Exists` even though its name still resolves (see `pending`).
         if r.is_collection_ref() {
+            if self.pending_deleted("collection", &r.id) {
+                return None;
+            }
             return self.collections.get(&r.id).map(|c| self.render_collection(c));
         }
         if r.is_index_ref() {
+            if self.pending_deleted("index", &r.id) {
+                return None;
+            }
             return self.indexes.get(&r.id).map(|i| self.render_index(i));
         }
         if r.is_function_ref() {
+            if self.pending_deleted("function", &r.id) {
+                return None;
+            }
             return self.functions.get(&r.id).map(|f| self.render_function(f));
         }
         if r.is_role_ref() {
+            if self.pending_deleted("role", &r.id) {
+                return None;
+            }
             return self.roles.get(&r.id).map(|x| self.render_role(x));
         }
         if let Some(coll) = r.document_collection() {
@@ -420,16 +477,16 @@ impl Database {
 
     pub fn exists_by_ref(&self, r: &Ref) -> bool {
         if r.is_collection_ref() {
-            return self.collections.contains_key(&r.id);
+            return self.collections.contains_key(&r.id) && !self.pending_deleted("collection", &r.id);
         }
         if r.is_index_ref() {
-            return self.indexes.contains_key(&r.id);
+            return self.indexes.contains_key(&r.id) && !self.pending_deleted("index", &r.id);
         }
         if r.is_function_ref() {
-            return self.functions.contains_key(&r.id);
+            return self.functions.contains_key(&r.id) && !self.pending_deleted("function", &r.id);
         }
         if r.is_role_ref() {
-            return self.roles.contains_key(&r.id);
+            return self.roles.contains_key(&r.id) && !self.pending_deleted("role", &r.id);
         }
         if let Some(coll) = r.document_collection() {
             return self.collections.contains_key(coll) && self.exists_document(coll, &r.id);
@@ -442,9 +499,19 @@ impl Database {
     fn require_name(params: &Object, pos: &Position) -> R<String> {
         match params.get("name") {
             Some(Value::String(s)) if !s.is_empty() => {
-                // NB: no reserved-name check. `RESERVED_NAMES` are the names the
-                // *ref parser* treats specially; the v4 server accepts them as
-                // collection names (verified against fauna/faunadb).
+                // The only reserved name on the v4 server is `_` (verified on the
+                // container); `RESERVED_NAMES` below are what the *ref parser*
+                // treats specially and are accepted as collection names.
+                if s == "_" {
+                    return one(FaunaError::validation_failed(
+                        vec![ValidationFailure {
+                            field: vec!["name".into()],
+                            code: "reserved name".into(),
+                            description: "Invalid name _. Reserved names: _.".into(),
+                        }],
+                        pos,
+                    ));
+                }
                 Ok(s.clone())
             }
             Some(Value::String(_)) | None => one(FaunaError::validation_failed(
@@ -484,7 +551,9 @@ impl Database {
     /// `CreateCollection(params)`.
     pub fn create_collection(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.collections.contains_key(&name) || self.pending_has("collection", &name) {
+        if (self.collections.contains_key(&name) && !self.pending_deleted("collection", &name))
+            || self.pending_has("collection", &name)
+        {
             return one(FaunaError::native_already_exists("Collection", pos));
         }
         let history_days = Self::opt_long(params, "history_days", pos)?;
@@ -641,7 +710,7 @@ impl Database {
     /// has no build phase.
     pub fn create_index(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.indexes.contains_key(&name) || self.pending_has("index", &name) {
+        if (self.indexes.contains_key(&name) && !self.pending_deleted("index", &name)) || self.pending_has("index", &name) {
             return one(FaunaError::native_already_exists("Index", pos));
         }
         let source = Self::parse_sources(params.get("source"), pos)?;
@@ -689,7 +758,9 @@ impl Database {
     /// `CreateFunction(params)`.
     pub fn create_function(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.functions.contains_key(&name) || self.pending_has("function", &name) {
+        if (self.functions.contains_key(&name) && !self.pending_deleted("function", &name))
+            || self.pending_has("function", &name)
+        {
             return one(FaunaError::native_already_exists("Function", pos));
         }
         let body = match params.get("body") {
@@ -737,7 +808,7 @@ impl Database {
     /// emulator runs every query with admin privileges.
     pub fn create_role(&mut self, params: &Object, ts: Timestamp, pos: &Position) -> R<Value> {
         let name = Self::require_name(params, pos)?;
-        if self.roles.contains_key(&name) || self.pending_has("role", &name) {
+        if (self.roles.contains_key(&name) && !self.pending_deleted("role", &name)) || self.pending_has("role", &name) {
             return one(FaunaError::native_already_exists("Role", pos));
         }
         let mut fields = Object::new();
