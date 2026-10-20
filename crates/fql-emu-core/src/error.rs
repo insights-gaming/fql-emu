@@ -234,6 +234,25 @@ impl FaunaError {
         FaunaError::invalid_argument_msg(format!("Cannot cast {} to {}.", from, to), pos)
     }
 
+    pub fn invalid_normalizer(provided: Type, pos: &Position) -> FaunaError {
+        FaunaError::invalid_argument_msg(
+            format!("String 'NFKCCaseFold', 'NFC', 'NFD', 'NFKC', or 'NFKD' expected, {} provided.", provided),
+            pos,
+        )
+    }
+
+    pub fn invalid_conversion_format(conversion: &str, pos: &Position) -> FaunaError {
+        FaunaError::invalid_argument_msg(format!("Invalid conversion format '{}'.", conversion), pos)
+    }
+
+    pub fn invalid_date_time_suffix(suffix: &str, pos: &Position) -> FaunaError {
+        FaunaError::invalid_argument_msg(format!("Invalid date/time suffix '{}'.", suffix), pos)
+    }
+
+    pub fn incompatible_time_arguments(pos: &Position) -> FaunaError {
+        FaunaError::invalid_argument_msg("Incompatible time arguments.", pos)
+    }
+
     pub fn non_numeric_sub_id(id: &str, pos: &Position) -> FaunaError {
         FaunaError::invalid_argument_msg(
             format!("Number or numeric String expected, non-numeric '{}' provided.", id),
