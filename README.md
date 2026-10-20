@@ -50,7 +50,7 @@ crates/fql-emu-wasm/        # wasm-bindgen wrapper
 js/                         # @insights/fql-emu: Client.query shim + vitest tests
 conformance/cases/*.json    # wire-format cases ported from Fauna's own specs
 scripts/build-wasm.sh       # builds js/wasm/ (uses nix if wasm-pack is absent)
-docs/                       # architecture notes, schema bundle format, gaps
+docs/                       # fql-v4-spec.md (semantics + source links), architecture, schema bundle format
 ```
 
 ## Build and test
@@ -84,6 +84,12 @@ const fork = emu.fork()                      // independent copy; the base is un
 In vitest, replace the module that exports your `faunaClient` with
 `emu.client()` (15 test files in the app already `vi.mock` that module as
 `{ faunaClient: { query } }`).
+
+## Spec
+
+`docs/fql-v4-spec.md` is the implementer-facing description of FQL **v4**
+semantics (not FQL v10 / FQL X), with links into the Fauna source for every
+section. Read it before touching the interpreter.
 
 ## Conformance
 
