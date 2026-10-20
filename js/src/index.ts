@@ -91,10 +91,16 @@ export interface EmulatorOptions {
  *   driver) at the position the real server reports. Reads, `NewId()` and
  *   `Now()` keep working. Nothing can change such an instance, so a suite
  *   that only reads can share one fork instead of forking per test.
+ * - `'read-only-pure-calls'`: `'read-only'`, except that `Call` of a UDF
+ *   whose body does not write is allowed (reads inside the body are fine;
+ *   a nested `Call` is checked when it runs). A UDF that writes is still
+ *   rejected at the `Call` with `permission denied`. No real key behaves
+ *   like this; it exists so a shared read-only instance can still exercise
+ *   read-only UDFs.
  */
-export type EmulatorMode = 'read-write' | 'read-only'
+export type EmulatorMode = 'read-write' | 'read-only' | 'read-only-pure-calls'
 
-const MODES: readonly EmulatorMode[] = ['read-write', 'read-only']
+const MODES: readonly EmulatorMode[] = ['read-write', 'read-only', 'read-only-pure-calls']
 
 /** `Emulator.stats()`. Keys mirror the Rust side. */
 export interface EmulatorStats {

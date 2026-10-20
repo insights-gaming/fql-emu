@@ -496,7 +496,15 @@ with a `<secret>:<db>:server-readonly` scoped secret):
 
 Not reproduced: the server also rejects `CreateKey` / `CreateRole` for
 plain `server` keys and applies ABAC for `client` keys and tokens; the
-emulator has only the two modes (admin, server-readonly).
+emulator has only admin and server-readonly.
+
+**Emulator-only:** `Mode::ReadOnlyPureCalls` / `fork('read-only-pure-calls')`
+is a read-only fork that additionally allows `Call` of a function whose
+body has no write effect (the static effect scan of `Expression.maxEffect`,
+except that a `call` form is rated a read because each nested `Call` is
+checked when it runs). A function that writes is denied at the `Call` like
+in a read-only fork. No real key behaves like this; it exists so a shared
+read-only instance can still exercise read-only UDFs.
 
 ## 11. Conformance workflow
 

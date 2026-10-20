@@ -32,7 +32,8 @@ drop-in shim for the `faunadb` JS driver's `Client.query`.
   Fauna's `permission denied` (403) exactly where the server would, while
   reads keep working. A fresh emulator is always writable; the seeded base
   is forked once, and that one read-only copy can be shared by every test
-  that only reads, since nothing can change it.
+  that only reads, since nothing can change it. `fork('read-only-pure-calls')`
+  is the same but lets tests call UDFs that do not write.
 - Loads a **schema bundle**: one JSON file listing the collections, indexes,
   functions and roles a test database should start with, each written as
   the params object of the corresponding `Create*` call. Seed it once and

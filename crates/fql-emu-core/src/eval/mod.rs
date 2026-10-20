@@ -250,7 +250,17 @@ pub fn call_function(ctx: &mut Ctx, f: &Value, args: Value, pos: &Position) -> R
     let def = resolve_function(ctx, f, &pos.key("call"))?;
     // A server-readonly key cannot call any function (`CallFunction` is not
     // in `ServerReadOnlyPermissions`), whatever the function's own role.
-    deny_if_read_only(ctx, pos)?;
+    // The emulator-only `ReadOnlyPureCalls` mode lets a body without write
+    // effect through; its nested `Call`s are checked when they run.
+    match ctx.db.mode {
+        crate::store::Mode::ReadWrite => {}
+        crate::store::Mode::ReadOnly => return one(FaunaError::permission_denied(pos)),
+        crate::store::Mode::ReadOnlyPureCalls => {
+            if sets::body_writes(&def.body.body) {
+                return one(FaunaError::permission_denied(pos));
+            }
+        }
+    }
     let body = def.body.clone();
     match apply_lambda(ctx, &body, args, pos) {
         Ok(v) => Ok(v),

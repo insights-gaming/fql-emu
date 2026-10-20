@@ -62,6 +62,8 @@ impl Emulator {
     /// read-only emulator: the base stays writable, so the schema and
     /// fixtures are loaded there and the read-only copy is handed to tests
     /// that only read (and can therefore share it without further forks).
+    /// `Mode::ReadOnlyPureCalls` additionally allows `Call` of functions
+    /// that do not write.
     pub fn fork_as(&self, mode: Mode) -> Emulator {
         let mut db = self.db.fork();
         db.mode = mode;

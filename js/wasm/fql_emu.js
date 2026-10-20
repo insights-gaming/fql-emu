@@ -18,8 +18,8 @@ class FqlEmulator {
         wasm.__wbg_fqlemulator_free(ptr, 0);
     }
     /**
-     * A fork in the given mode (`"read-write"` or `"read-only"`); see
-     * `Emulator::fork_as`.
+     * A fork in the given mode (`"read-write"`, `"read-only"` or
+     * `"read-only-pure-calls"`); see `Emulator::fork_as`.
      * @param {string} mode
      * @returns {FqlEmulator}
      */

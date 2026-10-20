@@ -350,6 +350,54 @@ describe('fork(mode)', () => {
     expect(() => seeded().fork('admin' as never)).toThrow(RangeError)
   })
 
+  describe("'read-only-pure-calls'", () => {
+    const withUdfs = () => {
+      const base = seeded()
+      base.loadSchema({
+        functions: [
+          { name: 'find', body: { '@query': { lambda: 'id', expr: { select: ['data', 'name'], from: { get: { ref: { collection: 'users' }, id: { var: 'id' } } } }, api_version: '4' } } },
+          { name: 'mk', body: { '@query': { lambda: 'n', expr: { create: { collection: 'users' }, params: { object: { data: { object: { name: { var: 'n' } } } } } }, api_version: '4' } } },
+          { name: 'via_find', body: { '@query': { lambda: 'id', expr: { call: { function: 'find' }, arguments: { var: 'id' } }, api_version: '4' } } },
+          { name: 'via_mk', body: { '@query': { lambda: 'n', expr: { call: { function: 'mk' }, arguments: { var: 'n' } }, api_version: '4' } } },
+        ],
+      })
+      return base
+    }
+
+    it('allows calling UDFs that only compute or read', async () => {
+      const base = withUdfs()
+      await base.query(q.Create(q.Ref(q.Collection('users'), '1'), { data: { name: 'ada' } }))
+      const emu = base.fork('read-only-pure-calls')
+      expect(emu.mode).toBe('read-only-pure-calls')
+      expect(await emu.query(q.Call(q.Function('greet'), 'ada'))).toBe('hi ada')
+      expect(await emu.query(q.Call(q.Function('find'), '1'))).toBe('ada')
+      expect(await emu.query(q.Call(q.Function('via_find'), '1'))).toBe('ada')
+      // Still a read-only instance otherwise.
+      expect(await rejection(emu.query(q.Create(q.Collection('users'), {})))).toBeInstanceOf(errors.PermissionDenied)
+      expect(await rejection(emu.query(q.Paginate(q.Roles())))).toBeInstanceOf(errors.PermissionDenied)
+      expect(() => emu.loadSchema({ collections: [{ name: 'x' }] })).toThrow(/read-only-pure-calls/)
+      expect(emu.stats()).toMatchObject({ documents: 1, mode: 'read-only-pure-calls' })
+    })
+
+    it('denies a writing UDF at the Call, and a nested writing Call where it runs', async () => {
+      const emu = withUdfs().fork('read-only-pure-calls')
+      const direct = await rejection(emu.query(q.Call(q.Function('mk'), 'bob')))
+      expect(direct).toBeInstanceOf(errors.PermissionDenied)
+      expect(errorsOf(direct)).toEqual([
+        { code: 'permission denied', description: 'Insufficient privileges to perform the action.', position: [] },
+      ])
+      const nested = await rejection(emu.query(q.Call(q.Function('via_mk'), 'bob')))
+      expect(errorsOf(nested)[0].code).toBe('call error')
+      expect(errorsOf(nested)[0].cause?.[0].code).toBe('permission denied')
+      expect(emu.stats().documents).toBe(0)
+    })
+
+    it("plain 'read-only' still denies every Call", async () => {
+      const emu = withUdfs().fork('read-only')
+      expect(await rejection(emu.query(q.Call(q.Function('find'), '1')))).toBeInstanceOf(errors.PermissionDenied)
+    })
+  })
+
   it('a read-only fork rejects writes and Call with PermissionDenied (403) and never changes', async () => {
     const base = seeded()
     await base.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))

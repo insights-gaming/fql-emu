@@ -168,6 +168,13 @@ pub enum Mode {
     /// `NewId()` and `Now()` still work, and the instance is guaranteed
     /// never to change, so it can be shared by tests that only read.
     ReadOnly,
+    /// `ReadOnly`, except that `Call` of a function whose body has no
+    /// write effect is allowed (`call` forms inside the body are rated as
+    /// reads, since each nested `Call` is checked at its own site). A
+    /// function that writes is still denied at the `Call`. This has no
+    /// server equivalent: it exists so a shared read-only instance can
+    /// still exercise read-only UDFs.
+    ReadOnlyPureCalls,
 }
 
 impl Mode {
@@ -179,6 +186,7 @@ impl Mode {
         match self {
             Mode::ReadWrite => "read-write",
             Mode::ReadOnly => "read-only",
+            Mode::ReadOnlyPureCalls => "read-only-pure-calls",
         }
     }
 
@@ -186,6 +194,7 @@ impl Mode {
         match s {
             "read-write" => Some(Mode::ReadWrite),
             "read-only" => Some(Mode::ReadOnly),
+            "read-only-pure-calls" => Some(Mode::ReadOnlyPureCalls),
             _ => None,
         }
     }

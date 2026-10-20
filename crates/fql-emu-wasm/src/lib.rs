@@ -34,8 +34,8 @@ impl FqlEmulator {
         FqlEmulator { inner: self.inner.fork() }
     }
 
-    /// A fork in the given mode (`"read-write"` or `"read-only"`); see
-    /// `Emulator::fork_as`.
+    /// A fork in the given mode (`"read-write"`, `"read-only"` or
+    /// `"read-only-pure-calls"`); see `Emulator::fork_as`.
     pub fn fork_as(&self, mode: &str) -> Result<FqlEmulator, JsError> {
         match Mode::parse(mode) {
             Some(m) => Ok(FqlEmulator { inner: self.inner.fork_as(m) }),

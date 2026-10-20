@@ -53,7 +53,7 @@ API:
 | `createEmulator({ maxDocuments?, now?, nextId? })` | a fresh, empty, writable database |
 | `emu.client(opts?)` | a new `faunadb.Client` on this emulator. `opts` go to the `Client` constructor (`observer`, `queryTimeout`, ...); `secret` and connection options are ignored |
 | `emu.query(expr, options?)` | `client().query` on an internal client |
-| `emu.fork(mode?)` | an independent copy (documents, schema, clock, id seed, limits); `mode` is `'read-write'` or `'read-only'` and defaults to the parent's (see below) |
+| `emu.fork(mode?)` | an independent copy (documents, schema, clock, id seed, limits); `mode` is `'read-write'`, `'read-only'` or `'read-only-pure-calls'` and defaults to the parent's (see below) |
 | `emu.mode` | the mode the emulator was forked with |
 | `emu.loadSchema(bundle)` | load collections / roles / functions / indexes; throws `SchemaLoadError` (with `.errors`) listing the Fauna errors |
 | `emu.setNow(date \| micros \| null)` | pin `Now()` and every written `ts`; `null` returns to the auto clock |
@@ -114,6 +114,12 @@ cannot be changed afterwards:
   untouched. `loadSchema` is refused too: load the schema into the base
   before forking. The exact rules and their sources are in
   `docs/fql-v4-spec.md` §10.
+- `fork('read-only-pure-calls')`: `'read-only'`, except that `Call` of a
+  UDF whose body does not write is allowed (reads inside the body are fine,
+  and a nested `Call` is checked when it runs). A UDF that writes is still
+  rejected at the `Call` with `permission denied`. No real key behaves like
+  this; it exists so a shared read-only instance can still exercise
+  read-only UDFs.
 
 `fork()` without a mode inherits the parent's, so a read-only fork's forks
 are read-only unless asked otherwise (`ro.fork('read-write')`).

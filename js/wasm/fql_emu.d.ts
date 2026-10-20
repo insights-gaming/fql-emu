@@ -5,8 +5,8 @@ export class FqlEmulator {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * A fork in the given mode (`"read-write"` or `"read-only"`); see
-     * `Emulator::fork_as`.
+     * A fork in the given mode (`"read-write"`, `"read-only"` or
+     * `"read-only-pure-calls"`); see `Emulator::fork_as`.
      */
     fork_as(mode: string): FqlEmulator;
     fork(): FqlEmulator;

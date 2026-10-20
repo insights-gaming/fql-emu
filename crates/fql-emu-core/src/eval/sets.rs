@@ -240,8 +240,19 @@ fn form_effect(name: &str) -> Effect {
 /// values, except where the server adds the lambda body's effect (the
 /// lambda of `Map`/`Foreach`/`Filter`/`Reduce`/`Merge`/`Join`).
 pub fn expr_effect(expr: &Json) -> Effect {
+    effect_of(expr, true)
+}
+
+/// Whether a function body may write, for `Mode::ReadOnlyPureCalls`.
+/// Unlike the server's `maxEffect`, a `call` form counts as a read: the
+/// callee is checked when that `Call` runs.
+pub fn body_writes(expr: &Json) -> bool {
+    effect_of(expr, false) == Effect::Write
+}
+
+fn effect_of(expr: &Json, cw: bool) -> Effect {
     match expr {
-        Json::Array(items) => items.iter().map(expr_effect).max().unwrap_or(Effect::Pure),
+        Json::Array(items) => items.iter().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure),
         Json::Object(o) => {
             if o.len() == 1 && o.keys().next().map(|k| k.starts_with('@')).unwrap_or(false) {
                 return Effect::Pure;
@@ -255,8 +266,10 @@ pub fn expr_effect(expr: &Json) -> Effect {
                 Some("quote") => return Effect::Pure,
                 Some("object") => {
                     return match o.get("object") {
-                        Some(Json::Object(fields)) => fields.values().map(expr_effect).max().unwrap_or(Effect::Pure),
-                        Some(other) => expr_effect(other),
+                        Some(Json::Object(fields)) => {
+                            fields.values().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure)
+                        }
+                        Some(other) => effect_of(other, cw),
                         None => Effect::Pure,
                     }
                 }
@@ -265,20 +278,24 @@ pub fn expr_effect(expr: &Json) -> Effect {
                         Some(Json::Array(items)) => items
                             .iter()
                             .map(|b| match b {
-                                Json::Object(bo) => bo.values().map(expr_effect).max().unwrap_or(Effect::Pure),
-                                other => expr_effect(other),
+                                Json::Object(bo) => bo.values().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure),
+                                other => effect_of(other, cw),
                             })
                             .max()
                             .unwrap_or(Effect::Pure),
-                        Some(Json::Object(bo)) => bo.values().map(expr_effect).max().unwrap_or(Effect::Pure),
-                        Some(other) => expr_effect(other),
+                        Some(Json::Object(bo)) => bo.values().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure),
+                        Some(other) => effect_of(other, cw),
                         None => Effect::Pure,
                     };
-                    return bindings.max(o.get("in").map(expr_effect).unwrap_or(Effect::Pure));
+                    return bindings.max(o.get("in").map(|e| effect_of(e, cw)).unwrap_or(Effect::Pure));
                 }
                 _ => {}
             }
-            let mut eff = name.map(form_effect).unwrap_or(Effect::Pure);
+            let mut eff = match name {
+                Some("call") if !cw => Effect::Read,
+                Some(n) => form_effect(n),
+                None => Effect::Pure,
+            };
             for (k, v) in o {
                 let arg = if is_inline_lambda(v) {
                     let body_counts = matches!(
@@ -291,12 +308,12 @@ pub fn expr_effect(expr: &Json) -> Effect {
                             | (Some("join"), "with")
                     );
                     if body_counts {
-                        v.get("expr").map(expr_effect).unwrap_or(Effect::Pure)
+                        v.get("expr").map(|e| effect_of(e, cw)).unwrap_or(Effect::Pure)
                     } else {
                         Effect::Pure
                     }
                 } else {
-                    expr_effect(v)
+                    effect_of(v, cw)
                 };
                 eff = eff.max(arg);
             }
@@ -1858,6 +1875,21 @@ mod tests {
 
     fn field(path: &[&str]) -> Value {
         Value::obj(vec![("field", Value::Array(path.iter().map(|p| Value::str(p)).collect()))])
+    }
+
+    #[test]
+    fn body_writes_rates_calls_as_reads_but_writes_as_writes() {
+        let j = |s: &str| serde_json::from_str::<Json>(s).unwrap();
+        assert!(!body_writes(&j(r#"{"concat": ["a", {"var": "n"}]}"#)));
+        assert!(!body_writes(&j(r#"{"get": {"var": "r"}}"#)));
+        assert!(!body_writes(&j(r#"{"call": {"function": "mk"}, "arguments": 1}"#)));
+        assert!(body_writes(&j(r#"{"create": {"collection": "users"}, "params": {"object": {}}}"#)));
+        assert!(body_writes(&j(r#"{"let": [{"x": {"delete": {"var": "r"}}}], "in": 1}"#)));
+        assert!(body_writes(&j(
+            r#"{"map": {"lambda": "x", "expr": {"create": {"collection": "users"}, "params": {"object": {}}}}, "collection": [1]}"#
+        )));
+        // The server's own analysis still treats a call as a write.
+        assert_eq!(expr_effect(&j(r#"{"call": {"function": "mk"}, "arguments": 1}"#)), Effect::Write);
     }
 
     #[test]

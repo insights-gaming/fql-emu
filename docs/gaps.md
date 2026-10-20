@@ -40,7 +40,9 @@ Verify anything in doubt with `npm run differential` against a real
 - Roles and ABAC are never enforced: every query runs as admin, or as a
   server-readonly key in a read-only fork (`fork_as(Mode::ReadOnly)` /
   `emu.fork('read-only')`, the only situation in which
-  `permission denied` is raised; see `docs/fql-v4-spec.md` §10).
+  `permission denied` is raised; see `docs/fql-v4-spec.md` §10). The
+  `read-only-pure-calls` fork mode, which lets non-writing UDFs be called,
+  has no server equivalent.
 - TTL expiry never happens (documents keep their `ttl` field).
 - Rate limits, metrics headers, streaming.
 
