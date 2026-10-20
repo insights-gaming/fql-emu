@@ -1,5 +1,5 @@
 /**
- * `@insights/fql-emu`: run `faunadb` (FQL v4) queries against an in-process
+ * `@insights-gaming/fql-emu`: run `faunadb` (FQL v4) queries against an in-process
  * emulator instead of a database container.
  *
  * The emulator is the Rust crate `fql-emu-core` compiled to wasm. This
@@ -372,15 +372,15 @@ export interface MockFaunaClientModule {
  *
  * ```ts
  * import { beforeEach, vi } from 'vitest'
- * import type { Emulator } from '@insights/fql-emu'
+ * import type { Emulator } from '@insights-gaming/fql-emu'
  *
  * const state = vi.hoisted(() => ({ emu: undefined as unknown as Emulator }))
  * vi.mock('./faunaClient', async () => {
- *   const { mockFaunaClient } = await import('@insights/fql-emu')
+ *   const { mockFaunaClient } = await import('@insights-gaming/fql-emu')
  *   return mockFaunaClient(() => state.emu)
  * })
  *
- * const { createEmulator } = await import('@insights/fql-emu')
+ * const { createEmulator } = await import('@insights-gaming/fql-emu')
  * const base = createEmulator()
  * base.loadSchema(bundle)
  * beforeEach(() => { state.emu = base.fork() })

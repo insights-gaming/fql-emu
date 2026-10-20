@@ -47,7 +47,7 @@ crates/fql-emu-core/        # the emulator (pure Rust, no I/O)
   src/eval/                 # the interpreter; one module per function family
   tests/conformance.rs      # runs conformance/cases/*.json
 crates/fql-emu-wasm/        # wasm-bindgen wrapper
-js/                         # @insights/fql-emu: Client.query shim + vitest tests
+js/                         # @insights-gaming/fql-emu: Client.query shim + vitest tests
 conformance/cases/*.json    # wire-format cases ported from Fauna's own specs
 scripts/build-wasm.sh       # builds js/wasm/ (uses nix if wasm-pack is absent)
 docs/                       # fql-v4-spec.md (semantics + source links), architecture, schema bundle format
@@ -65,11 +65,27 @@ The wasm artifact in `js/wasm/` is a build output. CI rebuilds it from the
 crate and fails if the committed/published artifact is stale, so TypeScript
 contributors never need a Rust toolchain.
 
+## Install
+
+The package is published to GitHub Packages as `@insights-gaming/fql-emu`.
+Point the scope at the GitHub registry once (a token with `read:packages`
+is required):
+
+```ini
+# .npmrc
+@insights-gaming:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+```sh
+npm install --save-dev @insights-gaming/fql-emu faunadb
+```
+
 ## JS usage
 
 ```ts
 import faunadb from 'faunadb'
-import { createEmulator } from '@insights/fql-emu'
+import { createEmulator } from '@insights-gaming/fql-emu'
 
 const emu = createEmulator()                 // fresh, empty database
 emu.loadSchema(schemaBundle)                 // collections, indexes, UDFs under their hashed names
