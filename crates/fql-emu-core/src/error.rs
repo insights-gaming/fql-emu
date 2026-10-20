@@ -196,6 +196,16 @@ impl FaunaError {
         )
     }
 
+    /// `InvalidLambdaEffect`: `pure` when the context allows no reads
+    /// either (e.g. index bindings), otherwise reads are allowed.
+    pub fn invalid_lambda_effect(pure: bool, pos: &Position) -> FaunaError {
+        let disallowed = if pure { "read, write, or call a user function" } else { "write or call a user function" };
+        FaunaError::invalid_argument_msg(
+            format!("Invalid lambda. Lambda in this context may not {}.", disallowed),
+            pos,
+        )
+    }
+
     pub fn bounds(argument: &str, predicate: &str, pos: &Position) -> FaunaError {
         FaunaError::invalid_argument_msg(format!("{} must be {}", argument, predicate), pos)
     }
