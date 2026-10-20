@@ -249,10 +249,27 @@ impl FaunaError {
         FaunaError::invalid_argument_msg("Sets are not compatible.", pos)
     }
 
+    /// `MixedArguments` (e.g. `Union` given both sets and arrays).
     pub fn mixed_arguments(expected: &[Type], pos: &Position) -> FaunaError {
-        let names: Vec<String> = expected.iter().map(|t| t.to_string()).collect();
+        let expected = match expected {
+            [] => String::new(),
+            [t] => format!(", expected {}", t),
+            [a, b] => format!(", expected {} or {}", a, b),
+            ts => {
+                let init: Vec<String> = ts[..ts.len() - 1].iter().map(|t| t.to_string()).collect();
+                format!(", expected {}, or {}", init.join(", "), ts[ts.len() - 1])
+            }
+        };
+        FaunaError::invalid_argument_msg(format!("Arguments cannot be of different types{}.", expected), pos)
+    }
+
+    /// `InvalidLambdaEffect`: a lambda that may not read (`pure_only`) or
+    /// write in this context (`Join` targets, set `Filter`s).
+    pub fn invalid_lambda_effect(pure_only: bool, pos: &Position) -> FaunaError {
+        let disallowed =
+            if pure_only { "read, write, or call a user function" } else { "write or call a user function" };
         FaunaError::invalid_argument_msg(
-            format!("Mixed argument types: expected all of {}.", names.join(", ")),
+            format!("Invalid lambda. Lambda in this context may not {}.", disallowed),
             pos,
         )
     }

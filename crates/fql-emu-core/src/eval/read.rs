@@ -7,13 +7,14 @@
 use super::cast;
 use super::forms::{Args, Registry};
 use super::{Ctx, Env};
-use crate::error::{one, FaunaError, Position, R};
-use crate::value::{Type, Value};
+use super::sets::PageCursor;
+use crate::error::{one, Errors, FaunaError, Position, R};
+use crate::value::{SetExpr, Type, Value};
 
 pub fn register(r: &mut Registry) {
     r.add("get", &["get"], &["ts"], get);
     r.add("exists", &["exists"], &["ts"], exists);
-    r.stub("paginate", &["paginate"], &["after", "before", "cursor", "ts", "size", "events", "sources"]);
+    r.add("paginate", &["paginate"], &["after", "before", "cursor", "ts", "size", "events", "sources"], paginate);
     r.stub("key_from_secret", &["key_from_secret"], &[]);
     r.add("current_identity", &["current_identity"], &[], current_identity);
     r.add("identity", &["identity"], &[], current_identity);
@@ -74,19 +75,13 @@ fn get(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
             }
         }
         Value::Set(s) => {
-            // Get(set) returns the first element's document.
-            let elems = super::sets::materialize(ctx, s, &p)?;
-            match elems.first() {
+            // Get(set) returns the document of the set's first entry
+            // (`EventSet.snapshotHead`), whatever values the set covers.
+            let entries = super::sets::materialize_entries(ctx, s, &p)?;
+            match entries.first().and_then(|e| e.key.last()) {
                 Some(Value::Ref(r)) => match ctx.db.get_by_ref(r) {
                     Some(doc) => Ok(doc),
                     None => one(FaunaError::document_not_found(&p)),
-                },
-                Some(Value::Array(items)) => match items.last() {
-                    Some(Value::Ref(r)) => match ctx.db.get_by_ref(r) {
-                        Some(doc) => Ok(doc),
-                        None => one(FaunaError::document_not_found(&p)),
-                    },
-                    _ => one(FaunaError::set_not_found(&p)),
                 },
                 _ => one(FaunaError::set_not_found(&p)),
             }
@@ -121,4 +116,108 @@ fn has_current_identity(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -
     let v = args.eval(ctx, env, key, pos)?;
     cast::null(&v, &pos.key(key))?;
     Ok(Value::Bool(ctx.identity().is_some()))
+}
+
+/// `Paginate(set_or_ref, after | before | cursor, ts, size, events,
+/// sources)` (PaginateFunction.scala). The three cursor keys are separate
+/// forms on the server, so at most one may be given. Argument errors are
+/// collected like the server's parallel argument evaluation.
+fn paginate(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    let cursor_keys: Vec<&str> = ["after", "before", "cursor"].into_iter().filter(|k| args.get(k).is_some()).collect();
+    if cursor_keys.len() > 1 {
+        let keys: Vec<&str> = args.obj.keys().map(|k| k.as_str()).collect();
+        return one(FaunaError::invalid_form(&keys, pos));
+    }
+    let mut errs: Errors = Vec::new();
+    let mut take = |r: R<Option<Value>>| match r {
+        Ok(v) => v,
+        Err(e) => {
+            errs.extend(e);
+            None
+        }
+    };
+    let target = take(args.eval(ctx, env, "paginate", pos).map(Some));
+    let cursor = match cursor_keys.first() {
+        Some(k) => take(args.eval_opt(ctx, env, k, pos)),
+        None => None,
+    };
+    let ts = take(args.eval_opt(ctx, env, "ts", pos));
+    let size = take(args.eval_opt(ctx, env, "size", pos));
+    let events = take(args.eval_opt(ctx, env, "events", pos));
+    let sources = take(args.eval_opt(ctx, env, "sources", pos));
+    if !errs.is_empty() {
+        return Err(errs);
+    }
+
+    let p = pos.key("paginate");
+    let mut errs: Errors = Vec::new();
+    let set = match &target {
+        Some(v) => match super::sets::identifier(ctx, v, &p) {
+            Ok(Some(s)) => Some(s),
+            // Any other ref paginates the document itself (`DocSet`).
+            Ok(None) => match v {
+                Value::Ref(r) => Some(SetExpr::Singleton(r.clone())),
+                _ => None,
+            },
+            Err(e) => {
+                errs.extend(e);
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(t) = &ts {
+        // `Casts.TransactionTimestamp`: a Time, Now(), or a Long.
+        match cast::timestamp(t, &pos.key("ts")) {
+            Ok(t) if t == ctx.ts => {}
+            Ok(_) => errs.push(FaunaError::not_emulated("temporal reads (`ts` other than Now())", &pos.key("ts"))),
+            Err(e) => errs.extend(e),
+        }
+    }
+    let size = match &size {
+        Some(v) => match cast::long(v, &pos.key("size")) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                errs.extend(e);
+                None
+            }
+        },
+        None => None,
+    };
+    for (key, v) in [("events", &events), ("sources", &sources)] {
+        if let Some(v) = v {
+            match cast::boolean(v, &pos.key(key)) {
+                Ok(true) if key == "events" => errs
+                    .push(FaunaError::not_emulated("`Paginate` with `events: true` (set history)", &pos.key(key))),
+                Ok(true) => errs.push(FaunaError::not_emulated("`Paginate` with `sources: true`", &pos.key(key))),
+                Ok(false) => {}
+                Err(e) => errs.extend(e),
+            }
+        }
+    }
+    let set = match set {
+        Some(s) if errs.is_empty() => s,
+        _ => return Err(errs),
+    };
+
+    let cursor = match (cursor_keys.first().copied(), cursor) {
+        (Some("after"), Some(v)) => PageCursor::After(v, pos.key("after")),
+        (Some("before"), Some(v)) => PageCursor::Before(v, pos.key("before")),
+        (Some("cursor"), Some(v)) => {
+            // `CursorParser.parseCursorObj`: `null`, `{after}` or `{before}`.
+            let cp = pos.key("cursor");
+            match v {
+                Value::Null => PageCursor::None,
+                Value::Object(o) if o.len() == 1 && o.contains_key("after") => {
+                    PageCursor::After(o["after"].clone(), cp.key("after"))
+                }
+                Value::Object(o) if o.len() == 1 && o.contains_key("before") => {
+                    PageCursor::Before(o["before"].clone(), cp.key("before"))
+                }
+                _ => return one(FaunaError::invalid_cursor_object(&cp)),
+            }
+        }
+        _ => PageCursor::None,
+    };
+    super::sets::paginate(ctx, &set, cursor, size, &p)
 }

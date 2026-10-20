@@ -208,6 +208,17 @@ impl Database {
         Ok(())
     }
 
+    /// Fixture hook: insert a document directly, bypassing `Create` (no
+    /// validation, no unique checks, no id minting). `fields` is everything
+    /// except `ref` and `ts` (`{"data": ...}`). The collection must exist.
+    pub fn seed_document(&mut self, collection: &str, id: &str, fields: Object, ts: Timestamp) -> R<()> {
+        let pos = Position::root();
+        if !self.collections.contains_key(collection) {
+            return one(FaunaError::unresolved_ref("collection", collection, &pos));
+        }
+        self.put_document(collection, id, Document { ts, fields }, &pos)
+    }
+
     pub fn remove_document(&mut self, collection: &str, id: &str) -> Option<Document> {
         let removed = self.documents.get_mut(collection)?.remove(id);
         if removed.is_some() {

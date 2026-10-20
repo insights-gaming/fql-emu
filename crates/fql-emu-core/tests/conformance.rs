@@ -8,6 +8,9 @@
 //!   "source": "ext/api/src/test/scala/queries/StringFunctionsSpec.scala",
 //!   "now_micros": 1600000000000000,          // optional: pin Now()
 //!   "schema": { "collections": [...], ... },  // optional: Emulator::load_schema bundle
+//!   "documents": [                            // optional: seeded after `schema`, before `setup`
+//!     { "collection": "users", "id": "1", "data": {...}, "ts": 1600000000000000 }
+//!   ],
 //!   "setup": [ <query>, ... ],                // optional: queries run before the cases
 //!   "cases": [
 //!     { "name": "adds longs", "query": {"add": [1, 2]}, "expect": 3 },
@@ -25,9 +28,19 @@
 //!
 //! `error` matches on `code` always, and on `description` / `position`
 //! only when given. `todo` cases are allowed to fail (and reported when
-//! they unexpectedly pass, so the marker can be removed).
+//! they unexpectedly pass, so the marker can be removed). Set
+//! `FQL_CONFORMANCE_SHOW_TODO=1` to print why each `todo` case fails.
+//!
+//! `documents` seeds documents directly into the store
+//! (`Database::seed_document`), bypassing `Create`: `collection` (must
+//! exist) and `id` (a numeric string or number) are required; every other
+//! key except `ts` becomes a document field in wire format (usually just
+//! `data`); `ts` is the document's micros timestamp and defaults to the
+//! suite clock. Seeded documents are part of the suite's base state.
 
-use fql_emu_core::Emulator;
+use fql_emu_core::error::Position;
+use fql_emu_core::value::{Object, Timestamp, Value};
+use fql_emu_core::{wire, Emulator};
 use serde_json::Value as Json;
 use std::fs;
 use std::path::PathBuf;
@@ -54,6 +67,11 @@ fn run_suite(path: &PathBuf) -> Outcome {
     }
     if let Some(schema) = suite.get("schema") {
         base.load_schema(schema).unwrap_or_else(|e| panic!("{}: schema failed: {:?}", file, e));
+    }
+    if let Some(Json::Array(docs)) = suite.get("documents") {
+        for (i, d) in docs.iter().enumerate() {
+            seed(&mut base, d).unwrap_or_else(|e| panic!("{}: documents[{}] failed: {}", file, i, e));
+        }
     }
     if let Some(Json::Array(setup)) = suite.get("setup") {
         for (i, q) in setup.iter().enumerate() {
@@ -110,11 +128,39 @@ fn run_suite(path: &PathBuf) -> Outcome {
         match (result, todo) {
             (Ok(()), false) => out.passed += 1,
             (Ok(()), true) => out.unexpected_passes.push(label),
-            (Err(_), true) => out.todo += 1,
+            (Err(msg), true) => {
+                if std::env::var_os("FQL_CONFORMANCE_SHOW_TODO").is_some() {
+                    eprintln!("todo: {}\n    {}", label, msg);
+                }
+                out.todo += 1
+            }
             (Err(msg), false) => out.failures.push(format!("{}\n    {}", label, msg)),
         }
     }
     out
+}
+
+fn seed(emu: &mut Emulator, d: &Json) -> Result<(), String> {
+    let o = d.as_object().ok_or("expected an object")?;
+    let collection = o.get("collection").and_then(|c| c.as_str()).ok_or("missing `collection`")?;
+    let id = match o.get("id") {
+        Some(Json::String(s)) => s.clone(),
+        Some(Json::Number(n)) => n.to_string(),
+        _ => return Err("missing `id`".into()),
+    };
+    let ts = match o.get("ts").and_then(|t| t.as_i64()) {
+        Some(micros) => Timestamp::of_micros(micros),
+        None => emu.db.clock.next(),
+    };
+    let mut fields = Object::new();
+    for (k, v) in o {
+        if k == "collection" || k == "id" || k == "ts" {
+            continue;
+        }
+        let value: Value = wire::decode_literal(v, &Position::root()).map_err(|e| format!("{}: {:?}", k, e))?;
+        fields.insert(k.clone(), value);
+    }
+    emu.db.seed_document(collection, &id, fields, ts).map_err(|e| format!("{:?}", e))
 }
 
 #[test]
