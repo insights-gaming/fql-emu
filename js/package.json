@@ -1,6 +1,6 @@
 {
   "name": "@insights-gaming/fql-emu",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "FQL v4 query emulator (Rust/wasm) with a drop-in faunadb Client.query shim for fast unit tests. Not a database.",
   "repository": {
     "type": "git",
