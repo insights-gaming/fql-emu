@@ -78,20 +78,20 @@
     { "name": "unique constraint violation", "query": { "do": [
         { "create": { "collection": "accounts" }, "params": { "object": { "data": { "object": { "email": "a@x" } } } } },
         { "create": { "collection": "accounts" }, "params": { "object": { "data": { "object": { "email": "a@x" } } } } }] },
-      "error": { "code": "instance not unique", "description": "document is not unique.", "position": ["do", 1, "create"] }, "todo": "needs index_entries (sets delegate)" },
+      "error": { "code": "instance not unique", "description": "document is not unique.", "position": ["do", 1, "create"] } },
     { "name": "unique constraint allows distinct terms", "query": { "do": [
         { "create": { "collection": "accounts" }, "params": { "object": { "data": { "object": { "email": "a@x" } } } } },
         { "select": ["data", "email"], "from": { "create": { "collection": "accounts" }, "params": { "object": { "data": { "object": { "email": "b@x" } } } } } }] },
-      "expect": "b@x", "todo": "needs index_entries (sets delegate)" },
+      "expect": "b@x" },
     { "name": "unique constraint on update", "query": { "do": [
         { "create": { "ref": { "collection": "accounts" }, "id": "1" }, "params": { "object": { "data": { "object": { "email": "a@x" } } } } },
         { "create": { "ref": { "collection": "accounts" }, "id": "2" }, "params": { "object": { "data": { "object": { "email": "b@x" } } } } },
         { "update": { "ref": { "collection": "accounts" }, "id": "2" }, "params": { "object": { "data": { "object": { "email": "a@x" } } } } }] },
-      "error": { "code": "instance not unique", "description": "document is not unique.", "position": ["do", 2] }, "todo": "needs index_entries (sets delegate)" },
+      "error": { "code": "instance not unique", "description": "document is not unique.", "position": ["do", 2] } },
     { "name": "unique constraint ignores the document itself", "query": { "do": [
         { "create": { "ref": { "collection": "accounts" }, "id": "1" }, "params": { "object": { "data": { "object": { "email": "a@x" } } } } },
         { "select": ["data"], "from": { "update": { "ref": { "collection": "accounts" }, "id": "1" }, "params": { "object": { "data": { "object": { "n": 1 } } } } } }] },
-      "expect": { "email": "a@x", "n": 1 }, "todo": "needs index_entries (sets delegate)" },
+      "expect": { "email": "a@x", "n": 1 } },
 
     { "name": "update merges data recursively", "query": { "update": { "ref": { "collection": "users" }, "id": "1" }, "params": { "object": { "data": { "object": { "name": "ada2", "address": { "object": { "zip": null, "country": "UK" } } } } } } },
       "expect": { "ref": { "@ref": { "id": "1", "collection": { "@ref": { "id": "users", "collection": { "@ref": { "id": "collections" } } } } } }, "ts": 1600000000000000,

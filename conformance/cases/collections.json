@@ -26,7 +26,7 @@
     { "name": "map over non-iterable", "query": { "map": { "lambda": "x", "expr": { "var": "x" } }, "collection": "abc" }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, String provided.", "position": ["collection"] } },
     { "name": "map over collection ref", "query": { "map": { "lambda": "x", "expr": { "var": "x" } }, "collection": { "collection": "nums" } }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, Collection Ref provided.", "position": ["collection"] } },
     { "name": "map over set is an error", "query": { "map": { "lambda": "x", "expr": { "var": "x" } }, "collection": { "@set": { "documents": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } }, "error": { "code": "invalid argument", "description": "Array or Page expected, Set provided.", "position": ["collection"] } },
-    { "name": "map over page keeps cursors", "query": { "map": { "lambda": "r", "expr": { "select": ["data", "value"], "from": { "get": { "var": "r" } } } }, "collection": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [1, 2, 3] }, "todo": "needs Paginate (sets delegate)" },
+    { "name": "map over page keeps cursors", "query": { "map": { "lambda": "r", "expr": { "select": ["data", "value"], "from": { "get": { "var": "r" } } } }, "collection": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [1, 2, 3] } },
 
     { "name": "foreach returns the collection", "query": { "foreach": { "lambda": "x", "expr": { "add": [{ "var": "x" }, 1] } }, "collection": [1, 2] }, "expect": [1, 2] },
     { "name": "foreach performs writes", "query": { "do": [{ "foreach": { "lambda": "i", "expr": { "create": { "ref": { "collection": "users" }, "id": { "var": "i" } } } }, "collection": [7, 8] }, { "exists": { "ref": { "collection": "users" }, "id": "8" } }] }, "expect": true },
@@ -41,7 +41,7 @@
     { "name": "filter set disallows calls", "query": { "filter": { "lambda": "x", "expr": { "call": "f", "arguments": [] } }, "collection": { "@set": { "documents": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } }, "error": { "code": "invalid argument", "description": "Invalid lambda. Lambda in this context may not write or call a user function.", "position": ["filter"] } },
     { "name": "filter set allows replace_str", "query": { "is_set": { "filter": { "lambda": "x", "expr": { "equals": [{ "replace_str": "a", "find": "a", "replace": "b" }, "b"] } }, "collection": { "@set": { "documents": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } } }, "expect": true },
     { "name": "filter page", "query": { "filter": { "lambda": "r", "expr": { "equals": [{ "var": "r" }, { "ref": { "collection": "nums" }, "id": "2" }] } }, "collection": { "paginate": { "documents": { "collection": "nums" } } } },
-      "expect": { "data": [{ "@ref": { "id": "2", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } }] }, "todo": "needs Paginate (sets delegate)" },
+      "expect": { "data": [{ "@ref": { "id": "2", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } }] } },
 
     { "name": "reduce sums", "query": { "reduce": { "lambda": ["acc", "v"], "expr": { "add": [{ "var": "acc" }, { "var": "v" }] } }, "initial": 0, "collection": [1, 2, 3] }, "expect": 6 },
     { "name": "reduce empty returns initial", "query": { "reduce": { "lambda": ["acc", "v"], "expr": { "abort": "never" } }, "initial": "init", "collection": [] }, "expect": "init" },
@@ -51,8 +51,8 @@
     { "name": "reduce non-iterable", "query": { "reduce": { "lambda": "x", "expr": { "var": "x" } }, "initial": 0, "collection": "string" }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, String provided.", "position": ["collection"] } },
     { "name": "reduce arity", "query": { "reduce": { "lambda": ["x", "y", "z"], "expr": { "var": "x" } }, "initial": 0, "collection": [1, 2, 3] }, "error": { "code": "invalid argument", "description": "Lambda expects an array with 3 elements. Array contains 2.", "position": ["reduce", "lambda"] } },
     { "name": "reduce body error", "query": { "reduce": { "lambda": ["acc", "value"], "expr": { "add": [{ "var": "acc" }, { "var": "value" }] } }, "initial": 0, "collection": [1, 2, "str", 3] }, "error": { "code": "invalid argument", "description": "Number expected, String provided.", "position": ["reduce", "expr", "add", 1] } },
-    { "name": "reduce over set", "query": { "reduce": { "lambda": ["acc", "r"], "expr": { "add": [{ "var": "acc" }, { "select": ["data", "value"], "from": { "get": { "var": "r" } } }] } }, "initial": 0, "collection": { "documents": { "collection": "nums" } } }, "expect": 6, "todo": "needs set materialisation (sets delegate)" },
-    { "name": "reduce over page wraps result", "query": { "reduce": { "lambda": ["acc", "r"], "expr": { "add": [{ "var": "acc" }, 1] } }, "initial": 0, "collection": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [3] }, "todo": "needs Paginate (sets delegate)" },
+    { "name": "reduce over set", "query": { "reduce": { "lambda": ["acc", "r"], "expr": { "add": [{ "var": "acc" }, { "select": ["data", "value"], "from": { "get": { "var": "r" } } }] } }, "initial": 0, "collection": { "documents": { "collection": "nums" } } }, "expect": 6 },
+    { "name": "reduce over page wraps result", "query": { "reduce": { "lambda": ["acc", "r"], "expr": { "add": [{ "var": "acc" }, 1] } }, "initial": 0, "collection": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [3] } },
 
     { "name": "prepend array", "query": { "prepend": [1, 2], "collection": [3] }, "expect": [1, 2, 3] },
     { "name": "prepend to empty", "query": { "prepend": [], "collection": [1, 2] }, "expect": [1, 2] },
@@ -69,7 +69,7 @@
     { "name": "take non-array", "query": { "take": 1, "collection": 1 }, "error": { "code": "invalid argument", "description": "Array or Page expected, Integer provided.", "position": ["collection"] } },
     { "name": "take set is not allowed in v4", "query": { "take": 1, "collection": { "@set": { "documents": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } }, "error": { "code": "invalid argument", "description": "Array or Page expected, Set provided.", "position": ["collection"] } },
     { "name": "take non-integer count", "query": { "take": "x", "collection": [1] }, "error": { "code": "invalid argument", "description": "Integer expected, String provided.", "position": ["take"] } },
-    { "name": "take negative on page", "query": { "take": -1, "collection": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [] }, "todo": "needs Paginate (sets delegate)" },
+    { "name": "take negative on page", "query": { "take": -1, "collection": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [] } },
     { "name": "drop", "query": { "drop": 2, "collection": [1, 2, 3] }, "expect": [3] },
     { "name": "drop negative", "query": { "drop": -1, "collection": [1, 2, 3] }, "expect": [1, 2, 3] },
     { "name": "drop more than length", "query": { "drop": 5, "collection": [1, 2, 3] }, "expect": [] },
@@ -81,14 +81,14 @@
     { "name": "is_nonempty empty", "query": { "is_nonempty": [] }, "expect": false },
     { "name": "is_empty non-iterable", "query": { "is_empty": 1 }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, Integer provided.", "position": ["is_empty"] } },
     { "name": "is_nonempty non-iterable", "query": { "is_nonempty": 1 }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, Integer provided.", "position": ["is_nonempty"] } },
-    { "name": "is_empty set", "query": { "is_empty": { "documents": { "collection": "nums" } } }, "expect": false, "todo": "needs set materialisation (sets delegate)" },
-    { "name": "is_empty page", "query": { "is_empty": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": false, "todo": "needs Paginate (sets delegate)" },
+    { "name": "is_empty set", "query": { "is_empty": { "documents": { "collection": "nums" } } }, "expect": false },
+    { "name": "is_empty page", "query": { "is_empty": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": false },
 
     { "name": "count array", "query": { "count": [1, 2, 3] }, "expect": 3 },
     { "name": "count empty", "query": { "count": [] }, "expect": 0 },
     { "name": "count non-iterable", "query": { "count": 1 }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, Integer provided.", "position": ["count"] } },
-    { "name": "count set", "query": { "count": { "documents": { "collection": "nums" } } }, "expect": 3, "todo": "needs set materialisation (sets delegate)" },
-    { "name": "count page wraps result", "query": { "count": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [3] }, "todo": "needs Paginate (sets delegate)" },
+    { "name": "count set", "query": { "count": { "documents": { "collection": "nums" } } }, "expect": 3 },
+    { "name": "count page wraps result", "query": { "count": { "paginate": { "documents": { "collection": "nums" } } } }, "expect": { "data": [3] } },
 
     { "name": "sum longs", "query": { "sum": [1, 2, 3] }, "expect": 6 },
     { "name": "sum promotes to double", "query": { "sum": [1, 2.5] }, "expect": 3.5 },
@@ -110,7 +110,7 @@
     { "name": "max of null", "query": { "max": [null] }, "expect": null },
     { "name": "max empty", "query": { "max": [] }, "error": { "code": "invalid argument", "description": "Non-empty array expected.", "position": ["max"] } },
     { "name": "max unresolved refs", "query": { "max": [{ "collection": "coll" }, { "index": "idx" }] }, "error": { "code": "invalid ref", "description": "Ref refers to undefined collection 'coll'", "position": ["max"] } },
-    { "name": "max set", "query": { "max": { "documents": { "collection": "nums" } } }, "expect": { "@ref": { "id": "3", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } }, "todo": "needs set materialisation (sets delegate)" },
+    { "name": "max set", "query": { "max": { "documents": { "collection": "nums" } } }, "expect": { "@ref": { "id": "3", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } },
     { "name": "min longs", "query": { "min": [1, 2, 4, 8] }, "expect": 1 },
     { "name": "min number under string", "query": { "min": ["A", 1] }, "expect": 1 },
     { "name": "min negative", "query": { "min": [1, -10, 16] }, "expect": -10 },
@@ -131,16 +131,16 @@
       { "@ref": { "id": "3", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } },
       { "@ref": { "id": "2", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } },
       { "@ref": { "id": "1", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } }
-    ] }, "todo": "needs Paginate (sets delegate)" },
+    ] } },
 
     { "name": "first", "query": { "first": [1, 2, 3] }, "expect": 1 },
     { "name": "last", "query": { "last": [1, 2, 3] }, "expect": 3 },
     { "name": "first empty", "query": { "first": [] }, "error": { "code": "invalid argument", "description": "Non-empty array expected.", "position": ["first"] } },
     { "name": "last empty", "query": { "last": [] }, "error": { "code": "invalid argument", "description": "Non-empty array expected.", "position": ["last"] } },
     { "name": "first non-iterable", "query": { "first": 1 }, "error": { "code": "invalid argument", "description": "Array, Set, or Page expected, Integer provided.", "position": ["first"] } },
-    { "name": "first of page is an error", "query": { "first": { "paginate": { "documents": { "collection": "nums" } } } }, "error": { "code": "invalid argument", "description": "Set or Array expected, Page provided.", "position": ["first"] }, "todo": "needs Paginate (sets delegate)" },
-    { "name": "first of set", "query": { "first": { "documents": { "collection": "nums" } } }, "expect": { "@ref": { "id": "1", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } }, "todo": "needs set materialisation (sets delegate)" },
-    { "name": "last of set", "query": { "last": { "documents": { "collection": "nums" } } }, "expect": { "@ref": { "id": "3", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } }, "todo": "needs set materialisation (sets delegate)" },
-    { "name": "first of empty set", "query": { "first": { "documents": { "collection": "users" } } }, "error": { "code": "invalid argument", "description": "Non-empty set expected.", "position": ["first"] }, "todo": "needs set materialisation (sets delegate)" }
+    { "name": "first of page is an error", "query": { "first": { "paginate": { "documents": { "collection": "nums" } } } }, "error": { "code": "invalid argument", "description": "Set or Array expected, Page provided.", "position": ["first"] } },
+    { "name": "first of set", "query": { "first": { "documents": { "collection": "nums" } } }, "expect": { "@ref": { "id": "1", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } },
+    { "name": "last of set", "query": { "last": { "documents": { "collection": "nums" } } }, "expect": { "@ref": { "id": "3", "collection": { "@ref": { "id": "nums", "collection": { "@ref": { "id": "collections" } } } } } } },
+    { "name": "first of empty set", "query": { "first": { "documents": { "collection": "users" } } }, "error": { "code": "invalid argument", "description": "Non-empty set expected.", "position": ["first"] } }
   ]
 }
