@@ -237,7 +237,7 @@ describe('loadSchema', () => {
     ],
     functions: [
       {
-        name: 'greet_1a2b3c',
+        name: 'greet',
         body: { '@query': { lambda: 'name', expr: { concat: ['hi ', { var: 'name' }] } } },
       },
     ],
@@ -247,7 +247,7 @@ describe('loadSchema', () => {
     const emu = createEmulator()
     emu.loadSchema(bundle)
     expect(emu.stats()).toMatchObject({ collections: 1, indexes: 1, functions: 1, documents: 0 })
-    expect(await emu.query(q.Call(q.Function('greet_1a2b3c'), 'ada'))).toBe('hi ada')
+    expect(await emu.query(q.Call(q.Function('greet'), 'ada'))).toBe('hi ada')
     const users = await emu.query<{ name: string; history_days: number }>(q.Get(q.Collection('users')))
     expect(users).toMatchObject({ name: 'users', history_days: 0 })
     const idx = await emu.query<{ name: string; unique: boolean; source: unknown }>(q.Get(q.Index('users_by_email')))

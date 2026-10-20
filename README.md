@@ -27,9 +27,10 @@ drop-in shim for the `faunadb` JS driver's `Client.query`.
   seed. `Now()` is fixed for the whole transaction.
 - Transactions are atomic: a query that errors leaves no writes behind.
 - Forks are `Clone`: seed once, fork per test.
-- Loads a schema bundle (collections, indexes, functions, roles) in the same
-  wire format as `CreateCollection` / `CreateIndex` / `CreateFunction`
-  params, so a codegen step can emit it.
+- Loads a **schema bundle**: one JSON file listing the collections, indexes,
+  functions and roles a test database should start with, each written as
+  the params object of the corresponding `Create*` call. Seed it once and
+  fork per test; see `docs/schema-bundle.md`.
 - **Fails loudly** on anything it does not emulate (`not emulated` error code):
   temporal queries (`At`, `Events`, `ts` arguments), child databases and
   scoped refs, keys/tokens/auth (`Login`, `CreateKey`, ...), TTL expiry,
@@ -88,7 +89,7 @@ import faunadb from 'faunadb'
 import { createEmulator } from '@insights-gaming/fql-emu'
 
 const emu = createEmulator()                 // fresh, empty database
-emu.loadSchema(schemaBundle)                 // collections, indexes, UDFs under their hashed names
+emu.loadSchema(schemaBundle)                 // collections, indexes, functions, roles (docs/schema-bundle.md)
 emu.setNow(new Date('2024-01-01T00:00:00Z')) // Now() is pinned until you change it
 
 const client = emu.client()                  // a real faunadb.Client whose HTTP layer is the emulator
