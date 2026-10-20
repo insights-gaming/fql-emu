@@ -221,7 +221,7 @@ fn parse_local_date(c: &mut Cursor, lenient: bool) -> Option<(i64, u32, u32)> {
         return None;
     }
     let day = c.digits(2)?;
-    if !(1..=12).contains(&month) || day < 1 || day > 31 {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     let max = days_in_month(year, month);
