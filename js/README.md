@@ -1,4 +1,4 @@
-# @insights/fql-emu
+# @insights-gaming/fql-emu
 
 Run `faunadb` (FQL v4) queries against an in-process emulator instead of a
 `fauna/faunadb` container. The emulator is Rust compiled to wasm; this package
@@ -13,11 +13,28 @@ classes, observers and error classes all run unchanged.
 > `emulator limit exceeded`). It exists so query *logic* can be tested quickly,
 > deterministically and in parallel. E2E runs stay on the real container.
 
+## Install
+
+Published to GitHub Packages. Add to `.npmrc` (token needs `read:packages`):
+
+```ini
+@insights-gaming:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+```sh
+npm install --save-dev @insights-gaming/fql-emu faunadb
+```
+
+Releases are published by the `publish` workflow when a `v*` tag is pushed
+(or run it manually); `prepack` builds `dist/` and the committed `wasm/` is
+shipped as-is.
+
 ## Usage
 
 ```ts
 import faunadb from 'faunadb'
-import { createEmulator } from '@insights/fql-emu'
+import { createEmulator } from '@insights-gaming/fql-emu'
 
 const q = faunadb.query
 
@@ -59,15 +76,15 @@ Passing a getter lets every test get a fresh fork without re-mocking:
 
 ```ts
 import { beforeEach, vi } from 'vitest'
-import type { Emulator } from '@insights/fql-emu'
+import type { Emulator } from '@insights-gaming/fql-emu'
 
 const state = vi.hoisted(() => ({ emu: undefined as unknown as Emulator }))
 vi.mock('./faunaClient', async () => {
-  const { mockFaunaClient } = await import('@insights/fql-emu')
+  const { mockFaunaClient } = await import('@insights-gaming/fql-emu')
   return mockFaunaClient(() => state.emu)
 })
 
-const { createEmulator } = await import('@insights/fql-emu')
+const { createEmulator } = await import('@insights-gaming/fql-emu')
 const base = createEmulator({ now: new Date('2024-01-01T00:00:00Z') })
 base.loadSchema(schemaBundle)
 
