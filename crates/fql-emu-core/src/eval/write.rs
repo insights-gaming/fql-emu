@@ -105,14 +105,12 @@ fn pos_path(pos: &Position) -> Vec<String> {
 fn validate_refs(ctx: &Ctx, params: &Object, pos: &Position) -> R<()> {
     fn walk(ctx: &Ctx, v: &Value, path: &mut Vec<String>, out: &mut Vec<ValidationFailure>) {
         match v {
-            Value::Ref(_) => {
-                if unresolved_ref(ctx, v, &Position::root()).is_some() {
-                    out.push(ValidationFailure {
-                        field: path.clone(),
-                        code: "invalid reference".into(),
-                        description: "Cannot read reference.".into(),
-                    });
-                }
+            Value::Ref(_) if unresolved_ref(ctx, v, &Position::root()).is_some() => {
+                out.push(ValidationFailure {
+                    field: path.clone(),
+                    code: "invalid reference".into(),
+                    description: "Cannot read reference.".into(),
+                });
             }
             Value::Object(o) => {
                 for (k, x) in o {
@@ -637,7 +635,7 @@ fn delete(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         ctx.db.indexes.retain(|_, idx| {
             let mut sources = idx.source.iter().map(|s| &s.collection);
             let sole = sources.all(|c| *c == SourceCollection::Collection(r.id.clone()));
-            !(sole && !idx.source.is_empty())
+            !sole || idx.source.is_empty()
         });
         return Ok(rendered);
     }

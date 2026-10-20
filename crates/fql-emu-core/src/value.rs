@@ -57,9 +57,9 @@ impl Timestamp {
         let n = self.nanos;
         let frac = if n == 0 {
             String::new()
-        } else if n % 1_000_000 == 0 {
+        } else if n.is_multiple_of(1_000_000) {
             format!(".{:03}", n / 1_000_000)
-        } else if n % 1_000 == 0 {
+        } else if n.is_multiple_of(1_000) {
             format!(".{:06}", n / 1_000)
         } else {
             format!(".{:09}", n)
