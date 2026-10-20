@@ -115,7 +115,7 @@ pub fn dispatch(ctx: &mut Ctx, env: &Env, obj: &Map<String, Json>, pos: &Positio
         Some((name, None)) => {
             // A server-readonly key denies these writes (at the position the
             // server uses) before the emulator would call them not emulated.
-            if ctx.db.read_only {
+            if ctx.db.mode.is_read_only() {
                 let denied_at = match name {
                     "insert" | "remove" => Some(pos.clone()),
                     "create_database" | "create_key" | "create_access_provider" => Some(pos.key(name)),

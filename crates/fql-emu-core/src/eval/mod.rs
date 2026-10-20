@@ -53,7 +53,7 @@ impl<'a> Ctx<'a> {
 /// permission: after argument casts and ref resolution, before validation
 /// of the write itself.
 pub fn deny_if_read_only(ctx: &Ctx, pos: &Position) -> R<()> {
-    if ctx.db.read_only {
+    if ctx.db.mode.is_read_only() {
         one(FaunaError::permission_denied(pos))
     } else {
         Ok(())

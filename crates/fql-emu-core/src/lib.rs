@@ -27,6 +27,7 @@ pub mod wire;
 
 use error::{FaunaError, Position};
 use serde_json::{json, Value as Json};
+pub use store::Mode;
 use store::{Clock, Database};
 use value::{Timestamp, Value};
 
@@ -51,9 +52,24 @@ impl Emulator {
         Emulator { db: Database::new() }
     }
 
-    /// A fork is an independent copy. Seed once, fork per test.
+    /// A fork is an independent copy in the same mode. Seed once, fork per
+    /// test.
     pub fn fork(&self) -> Emulator {
         Emulator { db: self.db.fork() }
+    }
+
+    /// A fork in the given [`Mode`]. This is the only way to obtain a
+    /// read-only emulator: the base stays writable, so the schema and
+    /// fixtures are loaded there and the read-only copy is handed to tests
+    /// that only read (and can therefore share it without further forks).
+    pub fn fork_as(&self, mode: Mode) -> Emulator {
+        let mut db = self.db.fork();
+        db.mode = mode;
+        Emulator { db }
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.db.mode
     }
 
     /// Pin `Now()` and all written timestamps to a fixed instant.
@@ -80,19 +96,6 @@ impl Emulator {
         self.db.limits.max_documents = n;
     }
 
-    /// Simulate a server-readonly key (`ServerReadOnlyPermissions`): every
-    /// write, every `Call`, and listing roles/keys/databases answer
-    /// `permission denied` (403) where the real server would. Reads,
-    /// `NewId()` and `Now()` still work. A read-only instance never takes a
-    /// query's working copy back, so it can be shared between tests.
-    /// `load_schema` is a setup call and stays available.
-    pub fn set_read_only(&mut self, read_only: bool) {
-        self.db.read_only = read_only;
-    }
-
-    pub fn read_only(&self) -> bool {
-        self.db.read_only
-    }
 
     /// Run one query (one transaction) against the store. Writes are
     /// committed only if the whole query succeeds.
@@ -106,7 +109,7 @@ impl Emulator {
         };
         match result {
             Ok(v) => {
-                if working.read_only {
+                if working.mode.is_read_only() {
                     // Every write path has already refused, so the working
                     // copy differs only in clock and id counter; keep just
                     // those so a shared instance is provably unchanged.
@@ -163,6 +166,16 @@ impl Emulator {
     /// `{"@ref": ...}`).
     pub fn load_schema(&mut self, bundle: &Json) -> Result<(), Vec<FaunaError>> {
         let pos = Position::root();
+        // Schema is loaded into the writable base before forking; a read-only
+        // copy is exactly what the server-readonly key would answer.
+        if self.db.mode.is_read_only() {
+            return Err(vec![FaunaError::permission_denied(&pos)]);
+        }
+        // Schema is loaded into the writable base before forking; a read-only
+        // copy is exactly what the server-readonly key would answer.
+        if self.db.mode.is_read_only() {
+            return Err(vec![FaunaError::permission_denied(&pos)]);
+        }
         let ts = self.db.clock.next();
         let sections = [
             ("collections", "create_collection"),
@@ -211,7 +224,7 @@ impl Emulator {
             "functions": self.db.functions.len(),
             "documents": self.db.doc_count,
             "max_documents": self.db.limits.max_documents,
-            "read_only": self.db.read_only,
+            "mode": self.db.mode.as_str(),
         })
     }
 }

@@ -18,6 +18,21 @@ class FqlEmulator {
         wasm.__wbg_fqlemulator_free(ptr, 0);
     }
     /**
+     * A fork in the given mode (`"read-write"` or `"read-only"`); see
+     * `Emulator::fork_as`.
+     * @param {string} mode
+     * @returns {FqlEmulator}
+     */
+    fork_as(mode) {
+        const ptr0 = passStringToWasm0(mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.fqlemulator_fork_as(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return FqlEmulator.__wrap(ret[0]);
+    }
+    /**
      * @returns {FqlEmulator}
      */
     fork() {
@@ -42,6 +57,21 @@ class FqlEmulator {
             return getStringFromWasm0(ret[0], ret[1]);
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    mode() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.fqlemulator_mode(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
     constructor() {
@@ -71,13 +101,6 @@ class FqlEmulator {
         } finally {
             wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
         }
-    }
-    /**
-     * @returns {boolean}
-     */
-    read_only() {
-        const ret = wasm.fqlemulator_read_only(this.__wbg_ptr);
-        return ret !== 0;
     }
     /**
      * @param {number} micros
@@ -124,13 +147,6 @@ class FqlEmulator {
         wasm.fqlemulator_set_now_micros(this.__wbg_ptr, micros);
     }
     /**
-     * Simulate a server-readonly key; see `Emulator::set_read_only`.
-     * @param {boolean} read_only
-     */
-    set_read_only(read_only) {
-        wasm.fqlemulator_set_read_only(this.__wbg_ptr, read_only);
-    }
-    /**
      * @returns {string}
      */
     stats() {
@@ -167,6 +183,10 @@ exports.FqlEmulator = FqlEmulator;
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg_Error_30c8987f7c2ed4e2: function(arg0, arg1) {
+            const ret = Error(getStringFromWasm0(arg0, arg1));
+            return ret;
+        },
         __wbg___wbindgen_throw_41e9ee4f547fc59a: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -237,6 +257,12 @@ function passStringToWasm0(arg, malloc, realloc) {
 
     WASM_VECTOR_LEN = offset;
     return ptr;
+}
+
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
 }
 
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });

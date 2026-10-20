@@ -21,15 +21,15 @@ import type { Client, ClientConfig, ExprArg, QueryOptions, values } from 'faunad
 interface WasmEmulator {
   free(): void
   fork(): WasmEmulator
+  fork_as(mode: string): WasmEmulator
   load_schema(bundleJson: string): string
+  mode(): string
   query(exprJson: string): string
-  read_only(): boolean
   set_auto_clock_from_micros(micros: number): void
   set_identity(identityJson: string): string
   set_max_documents(n: number): void
   set_next_id(id: bigint): void
   set_now_micros(micros: number): void
-  set_read_only(readOnly: boolean): void
   stats(): string
 }
 
@@ -77,14 +77,24 @@ export interface EmulatorOptions {
   now?: Date | number
   /** Seed for `NewId()` and auto-generated document ids. */
   nextId?: number | bigint
-  /** Start in read-only mode; see `Emulator.setReadOnly`. */
-  readOnly?: boolean
 }
 
-export interface ForkOptions {
-  /** Read-only mode for the fork. Defaults to the parent's setting. */
-  readOnly?: boolean
-}
+/**
+ * What queries may do. Fixed when an emulator is forked (`fork(mode)`); a
+ * fresh emulator is always `'read-write'`.
+ *
+ * - `'read-write'`: a server key.
+ * - `'read-only'`: a **server-readonly key**. Every write (`Create`,
+ *   `Update`, `Delete`, `CreateCollection`, ...), every `Call`, and listing
+ *   `Roles()` / `Keys()` / `Databases()` is rejected with Fauna's own
+ *   `permission denied` error (HTTP 403, `errors.PermissionDenied` in the
+ *   driver) at the position the real server reports. Reads, `NewId()` and
+ *   `Now()` keep working. Nothing can change such an instance, so a suite
+ *   that only reads can share one fork instead of forking per test.
+ */
+export type EmulatorMode = 'read-write' | 'read-only'
+
+const MODES: readonly EmulatorMode[] = ['read-write', 'read-only']
 
 /** `Emulator.stats()`. Keys mirror the Rust side. */
 export interface EmulatorStats {
@@ -93,7 +103,7 @@ export interface EmulatorStats {
   functions: number
   documents: number
   max_documents: number
-  read_only: boolean
+  mode: EmulatorMode
 }
 
 export interface SupportedForm {
@@ -260,7 +270,6 @@ export class Emulator {
     if (opts.maxDocuments !== undefined) emu.setMaxDocuments(opts.maxDocuments)
     if (opts.now !== undefined) emu.setNow(opts.now)
     if (opts.nextId !== undefined) emu.setNextId(opts.nextId)
-    if (opts.readOnly !== undefined) emu.setReadOnly(opts.readOnly)
     return emu
   }
 
@@ -288,13 +297,19 @@ export class Emulator {
 
   /**
    * An independent copy of the current state (documents, schema, clock, id
-   * seed, limits, read-only flag). `fork({ readOnly: false })` gives a
-   * writable copy of a read-only base.
+   * seed, limits) in the given mode; the mode defaults to this emulator's.
+   * This is the only way to get a read-only emulator: seed the writable
+   * base, then `fork('read-only')`.
    */
-  fork(opts: ForkOptions = {}): Emulator {
-    const f = new Emulator(this.#wasm.fork(), this.#clockMicros)
-    if (opts.readOnly !== undefined) f.setReadOnly(opts.readOnly)
-    return f
+  fork(mode?: EmulatorMode): Emulator {
+    if (mode === undefined) return new Emulator(this.#wasm.fork(), this.#clockMicros)
+    if (!MODES.includes(mode)) throw new RangeError(`fql-emu: unknown mode ${JSON.stringify(mode)}; expected one of ${MODES.join(', ')}`)
+    return new Emulator(this.#wasm.fork_as(mode), this.#clockMicros)
+  }
+
+  /** The mode this emulator was forked with (`'read-write'` for a fresh one). */
+  get mode(): EmulatorMode {
+    return this.#wasm.mode() as EmulatorMode
   }
 
   /**
@@ -303,6 +318,9 @@ export class Emulator {
    * params. Throws `SchemaLoadError` listing the Fauna errors on failure.
    */
   loadSchema(bundle: SchemaBundle | string): void {
+    if (this.mode !== 'read-write') {
+      throw new Error(`fql-emu: loadSchema on a '${this.mode}' emulator; load the schema into the writable base before forking`)
+    }
     const json = typeof bundle === 'string' ? bundle : JSON.stringify(bundle)
     const out = this.#wasm.load_schema(json)
     if (out !== 'null') throw new SchemaLoadError(JSON.parse(out) as FaunaErrorJson[])
@@ -335,34 +353,12 @@ export class Emulator {
 
   /**
    * What `CurrentIdentity()` returns (`null` clears it). Roles/ABAC are not
-   * enforced: queries run as admin, or as a server-readonly key in read-only
-   * mode (`setReadOnly`).
+   * enforced: queries run as admin, or as a server-readonly key in a
+   * `'read-only'` fork.
    */
   setIdentity(ref: values.Ref | null): void {
     const out = this.#wasm.set_identity(JSON.stringify(wrap(ref)))
     if (out !== 'null') throw new Error(`fql-emu: setIdentity failed: ${out}`)
-  }
-
-  /**
-   * Simulate a **server-readonly key**. Every write (`Create`, `Update`,
-   * `Delete`, `CreateCollection`, ...), every `Call`, and listing
-   * `Roles()` / `Keys()` / `Databases()` is rejected with Fauna's own
-   * `permission denied` error (HTTP 403, `errors.PermissionDenied` in the
-   * driver) at the position the real server reports. Reads, `NewId()` and
-   * `Now()` keep working.
-   *
-   * Two uses: testing code paths that run with a read-only key, and sharing
-   * one seeded emulator between tests without forking, since a read-only
-   * instance is guaranteed never to be mutated by a query. `loadSchema` is
-   * a setup call and remains available either way.
-   */
-  setReadOnly(readOnly: boolean): void {
-    this.#wasm.set_read_only(readOnly)
-  }
-
-  /** Whether `setReadOnly(true)` is in effect. */
-  get readOnly(): boolean {
-    return this.#wasm.read_only()
   }
 
   /** Change the document cap (default 5 000). */
@@ -428,9 +424,8 @@ export interface MockFaunaClientModule {
  *
  * With a single emulator: `vi.mock('./faunaClient', () => mockFaunaClient(emu))`
  * where `emu` comes from `vi.hoisted`. For a suite that only reads, seed
- * once and call `emu.setReadOnly(true)` instead of forking per test: a
- * read-only emulator cannot be changed by any query, so the tests can share
- * it safely.
+ * the base once and share a single `base.fork('read-only')` instead of
+ * forking per test: a read-only emulator cannot be changed by any query.
  */
 export function mockFaunaClient(emu: Emulator | (() => Emulator)): MockFaunaClientModule {
   const resolve = typeof emu === 'function' ? emu : () => emu

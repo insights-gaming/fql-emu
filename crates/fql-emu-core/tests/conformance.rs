@@ -33,9 +33,9 @@
 //! they unexpectedly pass, so the marker can be removed). Set
 //! `FQL_CONFORMANCE_SHOW_TODO=1` to print why each `todo` case fails.
 //!
-//! `read_only` switches the seeded emulator to read-only mode
-//! (`Emulator::set_read_only`) after `schema`, `documents` and `setup`
-//! have run, so the cases see what a server-readonly key sees.
+//! `read_only` replaces the seeded emulator with a read-only fork
+//! (`Emulator::fork_as(Mode::ReadOnly)`) after `schema`, `documents` and
+//! `setup` have run, so the cases see what a server-readonly key sees.
 //!
 //! `documents` seeds documents directly into the store
 //! (`Database::seed_document`), bypassing `Create`: `collection` (must
@@ -46,7 +46,7 @@
 
 use fql_emu_core::error::Position;
 use fql_emu_core::value::{Object, Timestamp, Value};
-use fql_emu_core::{wire, Emulator};
+use fql_emu_core::{wire, Emulator, Mode};
 use serde_json::Value as Json;
 use std::fs;
 use std::path::PathBuf;
@@ -87,7 +87,7 @@ fn run_suite(path: &PathBuf) -> Outcome {
     }
 
     if suite.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false) {
-        base.set_read_only(true);
+        base = base.fork_as(Mode::ReadOnly);
     }
 
     let mut out = Outcome { failures: vec![], unexpected_passes: vec![], passed: 0, todo: 0 };

@@ -90,6 +90,6 @@ tests cannot accidentally pass against them.
 
 temporal reads (`At`, `ts`), `Events`/history, child databases/scoped refs,
 keys/tokens/credentials/`Login`/`Identify`, roles and ABAC enforcement
-(beyond the server-readonly simulation of read-only mode),
+(beyond the server-readonly simulation of read-only forks),
 access providers / JWT, TTL expiry, streaming, `Insert`/`Remove`,
 `MoveDatabase`, rate limits, metrics headers.

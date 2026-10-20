@@ -50,17 +50,17 @@ API:
 
 | | |
 |---|---|
-| `createEmulator({ maxDocuments?, now?, nextId?, readOnly? })` | a fresh, empty database |
+| `createEmulator({ maxDocuments?, now?, nextId? })` | a fresh, empty, writable database |
 | `emu.client(opts?)` | a new `faunadb.Client` on this emulator. `opts` go to the `Client` constructor (`observer`, `queryTimeout`, ...); `secret` and connection options are ignored |
 | `emu.query(expr, options?)` | `client().query` on an internal client |
-| `emu.fork({ readOnly? })` | an independent copy (documents, schema, clock, id seed, limits, read-only flag); `{ readOnly: false }` gives a writable copy of a read-only base |
+| `emu.fork(mode?)` | an independent copy (documents, schema, clock, id seed, limits); `mode` is `'read-write'` or `'read-only'` and defaults to the parent's (see below) |
+| `emu.mode` | the mode the emulator was forked with |
 | `emu.loadSchema(bundle)` | load collections / roles / functions / indexes; throws `SchemaLoadError` (with `.errors`) listing the Fauna errors |
 | `emu.setNow(date \| micros \| null)` | pin `Now()` and every written `ts`; `null` returns to the auto clock |
 | `emu.setNextId(n \| bigint)` | seed for `NewId()` (use a `bigint` above 2^53, e.g. snowflake-sized ids) |
 | `emu.setIdentity(ref \| null)` | what `CurrentIdentity()` returns |
-| `emu.setReadOnly(flag)` / `emu.readOnly` | simulate a `server-readonly` key (see below) |
 | `emu.setMaxDocuments(n)` | change the document cap |
-| `emu.stats()` | `{ collections, indexes, functions, documents, max_documents, read_only }` |
+| `emu.stats()` | `{ collections, indexes, functions, documents, max_documents, mode }` |
 | `emu.free()` | release the wasm memory now (otherwise it is freed on GC) |
 | `Emulator.supportedForms()` | `[{ name, implemented }]` for every recognised form |
 | `mockFaunaClient(emu \| () => emu)` | a `{ faunaClient, query }` module for `vi.mock` |
@@ -99,39 +99,44 @@ from `vi.hoisted` or a dynamic `import()`, as above. With a single emulator,
 `vi.mock('./faunaClient', () => mockFaunaClient(emu))` works as long as `emu`
 comes from `vi.hoisted`. `test/vimock.test.ts` is a working example.
 
-## Read-only mode
+## Modes and read-only forks
 
-`emu.setReadOnly(true)` (or `createEmulator({ readOnly: true })`,
-`fork({ readOnly: true })`) makes the emulator answer like a
-`server-readonly` key: every write (`Create`, `Update`, `Delete`,
-`CreateCollection`, ...), every `Call`, and listing `Roles()` / `Keys()` /
-`Databases()` is rejected with Fauna's own `permission denied` error (HTTP
-403, `errors.PermissionDenied` in the driver) at the position the real
-server reports, after the same argument checks. Reads, `NewId()` and
-`Now()` keep working, and lazy branches are untouched. The exact rules and
-their sources are in `docs/fql-v4-spec.md` §10.
+A fresh emulator is always writable. The mode is chosen when forking and
+cannot be changed afterwards:
 
-Two reasons to use it:
+- `fork('read-write')` (the default for a writable parent): a server key.
+- `fork('read-only')`: a `server-readonly` key. Every write (`Create`,
+  `Update`, `Delete`, `CreateCollection`, ...), every `Call`, and listing
+  `Roles()` / `Keys()` / `Databases()` is rejected with Fauna's own
+  `permission denied` error (HTTP 403, `errors.PermissionDenied` in the
+  driver) at the position the real server reports, after the same argument
+  checks. Reads, `NewId()` and `Now()` keep working, and lazy branches are
+  untouched. `loadSchema` is refused too: load the schema into the base
+  before forking. The exact rules and their sources are in
+  `docs/fql-v4-spec.md` §10.
+
+`fork()` without a mode inherits the parent's, so a read-only fork's forks
+are read-only unless asked otherwise (`ro.fork('read-write')`).
+
+Two reasons to use a read-only fork:
 
 - The code under test runs with a read-only key in production, and you want
   the same failures in tests.
-- A suite that only reads can share one seeded emulator instead of forking
-  per test: a read-only instance cannot be changed by any query, so there is
-  nothing to isolate.
+- A suite that only reads can share **one** fork instead of forking per
+  test: nothing can change a read-only instance, so there is nothing to
+  isolate, and the per-test copy is skipped entirely.
 
 ```ts
 const base = createEmulator()
 base.loadSchema(bundle)
 await base.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))
-base.setReadOnly(true)
+const shared = base.fork('read-only')
 
-// Every test can use base.client() directly ...
-await expect(base.query(q.Create(q.Collection('users'), {}))).rejects.toBeInstanceOf(errors.PermissionDenied)
-// ... and a test that needs to write forks a writable copy.
-const writable = base.fork({ readOnly: false })
+// Every test can use shared.client() directly ...
+await expect(shared.query(q.Create(q.Collection('users'), {}))).rejects.toBeInstanceOf(errors.PermissionDenied)
+// ... and a test that needs to write takes its own writable copy.
+const writable = base.fork()
 ```
-
-`loadSchema` is a setup call and stays available in read-only mode.
 
 ## Determinism
 

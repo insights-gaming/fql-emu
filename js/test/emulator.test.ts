@@ -292,7 +292,7 @@ describe('limits and stats', () => {
   it('maxDocuments is applied and reported', () => {
     expect(createEmulator().stats().max_documents).toBe(5000)
     const emu = createEmulator({ maxDocuments: 2 })
-    expect(emu.stats()).toEqual({ collections: 0, indexes: 0, functions: 0, documents: 0, max_documents: 2, read_only: false })
+    expect(emu.stats()).toEqual({ collections: 0, indexes: 0, functions: 0, documents: 0, max_documents: 2, mode: 'read-write' })
     expect(() => emu.setMaxDocuments(-1)).toThrow(RangeError)
   })
 
@@ -317,7 +317,7 @@ describe('free()', () => {
   })
 })
 
-describe('readOnly', () => {
+describe('fork(mode)', () => {
   const seeded = () => {
     const emu = createEmulator({ now: JAN_1_2024 })
     emu.loadSchema({
@@ -329,20 +329,31 @@ describe('readOnly', () => {
     return emu
   }
 
-  it('is off by default and reported by the getter and stats()', () => {
+  it('a fresh emulator is read-write; the mode is reported by the getter and stats()', () => {
     const emu = seeded()
-    expect(emu.readOnly).toBe(false)
-    expect(emu.stats().read_only).toBe(false)
-    emu.setReadOnly(true)
-    expect(emu.readOnly).toBe(true)
-    expect(emu.stats().read_only).toBe(true)
-    expect(createEmulator({ readOnly: true }).readOnly).toBe(true)
+    expect(emu.mode).toBe('read-write')
+    expect(emu.stats().mode).toBe('read-write')
+    const ro = emu.fork('read-only')
+    expect(ro.mode).toBe('read-only')
+    expect(ro.stats().mode).toBe('read-only')
+    expect(emu.mode).toBe('read-write')
   })
 
-  it('rejects writes and Call with PermissionDenied (403) and leaves the state unchanged', async () => {
-    const emu = seeded()
-    await emu.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))
-    emu.setReadOnly(true)
+  it('fork() inherits the mode; fork(mode) overrides it either way', () => {
+    const ro = seeded().fork('read-only')
+    expect(ro.fork().mode).toBe('read-only')
+    expect(ro.fork('read-write').mode).toBe('read-write')
+    expect(seeded().fork().mode).toBe('read-write')
+  })
+
+  it('rejects an unknown mode', () => {
+    expect(() => seeded().fork('admin' as never)).toThrow(RangeError)
+  })
+
+  it('a read-only fork rejects writes and Call with PermissionDenied (403) and never changes', async () => {
+    const base = seeded()
+    await base.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))
+    const emu = base.fork('read-only')
     const before = emu.stats()
 
     const e = await rejection(emu.query(q.Create(q.Collection('users'), { data: { name: 'bob' } })))
@@ -360,9 +371,8 @@ describe('readOnly', () => {
     expect(page.data).toHaveLength(1)
   })
 
-  it('reads, NewId() and Now() keep working; the clock still advances', async () => {
-    const emu = seeded()
-    emu.setReadOnly(true)
+  it('reads, NewId() and Now() keep working on a read-only fork; the clock still advances', async () => {
+    const emu = seeded().fork('read-only')
     expect(await emu.query(q.Exists(q.Collection('users')))).toBe(true)
     expect(await emu.query(q.Select('name', q.Get(q.Function('greet'))))).toBe('greet')
     const a = await emu.query<string>(q.NewId())
@@ -374,33 +384,23 @@ describe('readOnly', () => {
     expect(t2).toBeGreaterThan(t1)
   })
 
-  it('can be switched off again', async () => {
-    const emu = seeded()
-    emu.setReadOnly(true)
-    await rejection(emu.query(q.Create(q.Collection('users'), {})))
-    emu.setReadOnly(false)
-    await emu.query(q.Create(q.Collection('users'), {}))
-    expect(emu.stats().documents).toBe(1)
-  })
-
-  it('forks inherit the flag unless overridden; the base stays untouched', async () => {
+  it('a read-only fork refuses loadSchema; the base and a read-write fork accept it', () => {
     const base = seeded()
-    base.setReadOnly(true)
-    expect(base.fork().readOnly).toBe(true)
-    const writable = base.fork({ readOnly: false })
-    expect(writable.readOnly).toBe(false)
-    await writable.query(q.Create(q.Collection('users'), {}))
-    expect(writable.stats().documents).toBe(1)
-    expect(base.stats().documents).toBe(0)
-    expect(base.readOnly).toBe(true)
-    const ro = seeded().fork({ readOnly: true })
-    expect(ro.readOnly).toBe(true)
+    const ro = base.fork('read-only')
+    expect(() => ro.loadSchema({ collections: [{ name: 'more' }] })).toThrow(/loadSchema on a 'read-only' emulator/)
+    expect(ro.stats().collections).toBe(1)
+    base.loadSchema({ collections: [{ name: 'more' }] })
+    expect(base.stats().collections).toBe(2)
+    const rw = ro.fork('read-write')
+    rw.loadSchema({ collections: [{ name: 'even_more' }] })
+    expect(rw.stats().collections).toBe(2)
+    expect(ro.stats().collections).toBe(1)
   })
 
-  it('one shared instance serves many clients safely', async () => {
-    const shared = seeded()
-    await shared.query(q.Create(q.Ref(q.Collection('users'), '1'), { data: { name: 'ada' } }))
-    shared.setReadOnly(true)
+  it('one shared read-only fork serves many clients safely', async () => {
+    const base = seeded()
+    await base.query(q.Create(q.Ref(q.Collection('users'), '1'), { data: { name: 'ada' } }))
+    const shared = base.fork('read-only')
     const clients = Array.from({ length: 10 }, () => shared.client())
     await Promise.all(
       clients.map(async (c, i) => {
@@ -409,12 +409,11 @@ describe('readOnly', () => {
         await expect(c.query(q.Update(q.Collection('users'), { data: { i } }))).rejects.toBeInstanceOf(errors.PermissionDenied)
       }),
     )
-    expect(shared.stats()).toMatchObject({ documents: 1, collections: 1, read_only: true })
-  })
-
-  it('loadSchema remains available as a setup call', () => {
-    const emu = createEmulator({ readOnly: true })
-    emu.loadSchema({ collections: [{ name: 'users' }] })
-    expect(emu.stats().collections).toBe(1)
+    expect(shared.stats()).toMatchObject({ documents: 1, collections: 1, mode: 'read-only' })
+    // A test that needs to write takes a writable fork; the shared one is untouched.
+    const writable = shared.fork('read-write')
+    await writable.query(q.Create(q.Collection('users'), {}))
+    expect(writable.stats().documents).toBe(2)
+    expect(shared.stats().documents).toBe(1)
   })
 })

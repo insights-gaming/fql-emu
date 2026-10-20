@@ -4,12 +4,18 @@
 export class FqlEmulator {
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * A fork in the given mode (`"read-write"` or `"read-only"`); see
+     * `Emulator::fork_as`.
+     */
+    fork_as(mode: string): FqlEmulator;
     fork(): FqlEmulator;
     /**
      * Load a schema bundle (see `Emulator::load_schema`). Returns `null`
      * on success or a JSON array of errors.
      */
     load_schema(bundle_json: string): string;
+    mode(): string;
     constructor();
     /**
      * Run one query. `expr_json` is the serialised query expression.
@@ -18,7 +24,6 @@ export class FqlEmulator {
      * (`txn_time_micros` is `null` when the body was not valid JSON).
      */
     query(expr_json: string): string;
-    read_only(): boolean;
     set_auto_clock_from_micros(micros: number): void;
     /**
      * `identity_json` is a `{"@ref": ...}` value, or `null`.
@@ -30,10 +35,6 @@ export class FqlEmulator {
      */
     set_next_id(id: bigint): void;
     set_now_micros(micros: number): void;
-    /**
-     * Simulate a server-readonly key; see `Emulator::set_read_only`.
-     */
-    set_read_only(read_only: boolean): void;
     stats(): string;
     /**
      * JSON array of `[name, implemented]` pairs.

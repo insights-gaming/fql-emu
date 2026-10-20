@@ -119,7 +119,7 @@ fn iterable(ctx: &Ctx, v: Value, pos: &Position) -> R<Iter> {
         Value::Set(s) => Ok(Iter::Set(s)),
         Value::Ref(r) if r.is_native() => {
             // A server-readonly key is denied these before anything iterates.
-            if ctx.db.read_only && matches!(r.id.as_str(), "roles" | "databases" | "keys" | "access_providers") {
+            if ctx.db.mode.is_read_only() && matches!(r.id.as_str(), "roles" | "databases" | "keys" | "access_providers") {
                 return one(FaunaError::permission_denied(pos));
             }
             one(FaunaError::not_emulated("iterating native collections (schema sets)", pos))

@@ -152,12 +152,43 @@ pub struct Database {
     pub clock: Clock,
     pub identity: Option<Ref>,
     pub limits: Limits,
-    /// Simulates a server-readonly key (`ServerReadOnlyPermissions`): every
-    /// write, every `Call`, and listing roles/keys/databases/access
-    /// providers answer `permission denied` (403). Reads, `NewId()` and
-    /// `Now()` still work. Also a guarantee that a shared instance is never
-    /// mutated by a query.
-    pub read_only: bool,
+    /// Fixed when the emulator is forked; see [`Mode`].
+    pub mode: Mode,
+}
+
+/// What queries may do. Chosen when forking (`Emulator::fork_as`): a fresh
+/// emulator is always `ReadWrite`, and a read-only copy is a fork, so the
+/// base that was seeded stays the one writable instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    ReadWrite,
+    /// A server-readonly key (`ServerReadOnlyPermissions`): every write,
+    /// every `Call`, and listing roles/keys/databases/access providers
+    /// answer `permission denied` (403) where the server would. Reads,
+    /// `NewId()` and `Now()` still work, and the instance is guaranteed
+    /// never to change, so it can be shared by tests that only read.
+    ReadOnly,
+}
+
+impl Mode {
+    pub fn is_read_only(self) -> bool {
+        self != Mode::ReadWrite
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::ReadWrite => "read-write",
+            Mode::ReadOnly => "read-only",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Mode> {
+        match s {
+            "read-write" => Some(Mode::ReadWrite),
+            "read-only" => Some(Mode::ReadOnly),
+            _ => None,
+        }
+    }
 }
 
 impl Default for Database {
@@ -220,7 +251,7 @@ impl Database {
             clock: Clock::Auto { last: Timestamp::of_micros(1_600_000_000_000_000) },
             identity: None,
             limits: Limits::default(),
-            read_only: false,
+            mode: Mode::ReadWrite,
         }
     }
 

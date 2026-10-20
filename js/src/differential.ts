@@ -264,7 +264,7 @@ interface WasmEmulator {
   set_auto_clock_from_micros(micros: number): void
   set_next_id(id: bigint): void
   set_now_micros(micros: number): void
-  set_read_only(readOnly: boolean): void
+  fork_as(mode: string): WasmEmulator
 }
 
 const wasm = createRequire(import.meta.url)('../wasm/fql_emu.js') as { FqlEmulator: new () => WasmEmulator }
@@ -305,8 +305,10 @@ function seedEmulator(suite: Suite, shift: number, fixtureShift = shift): WasmEm
     const a = emuQuery(emu, s)
     if (a.status !== 200) throw new Error(`emulator: setup[${i}] failed: ${show(a.body)}`)
   }
-  if (suite.readOnly) emu.set_read_only(true)
-  return emu
+  if (!suite.readOnly) return emu
+  const ro = emu.fork_as('read-only')
+  emu.free()
+  return ro
 }
 
 // ---------------------------------------------------------------------------

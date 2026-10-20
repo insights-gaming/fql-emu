@@ -1375,7 +1375,7 @@ fn documents_elems(ctx: &Ctx, coll: &Ref, pos: &Position) -> R<Vec<SEvent>> {
             "functions" => db.functions.keys().map(|n| Ref::function(n)).collect(),
             // `ServerReadOnlyPermissions` has no unrestricted collection
             // read, so a read-only key cannot list these.
-            "roles" | "databases" | "keys" | "access_providers" if db.read_only => {
+            "roles" | "databases" | "keys" | "access_providers" if db.mode.is_read_only() => {
                 return one(FaunaError::permission_denied(pos))
             }
             "roles" => db.roles.keys().map(|n| Ref::role(n)).collect(),

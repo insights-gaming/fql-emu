@@ -3,7 +3,7 @@
 //! Strings in, strings out: the JS side passes the exact JSON the driver
 //! would have POSTed and gets back `{status, body}` as a JSON string.
 
-use fql_emu_core::{wire, Emulator, Response};
+use fql_emu_core::{wire, Emulator, Mode, Response};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -32,6 +32,19 @@ impl FqlEmulator {
 
     pub fn fork(&self) -> FqlEmulator {
         FqlEmulator { inner: self.inner.fork() }
+    }
+
+    /// A fork in the given mode (`"read-write"` or `"read-only"`); see
+    /// `Emulator::fork_as`.
+    pub fn fork_as(&self, mode: &str) -> Result<FqlEmulator, JsError> {
+        match Mode::parse(mode) {
+            Some(m) => Ok(FqlEmulator { inner: self.inner.fork_as(m) }),
+            None => Err(JsError::new(&format!("unknown emulator mode {:?}", mode))),
+        }
+    }
+
+    pub fn mode(&self) -> String {
+        self.inner.mode().as_str().to_string()
     }
 
     /// Load a schema bundle (see `Emulator::load_schema`). Returns `null`
@@ -84,14 +97,6 @@ impl FqlEmulator {
         self.inner.set_max_documents(n as usize);
     }
 
-    /// Simulate a server-readonly key; see `Emulator::set_read_only`.
-    pub fn set_read_only(&mut self, read_only: bool) {
-        self.inner.set_read_only(read_only);
-    }
-
-    pub fn read_only(&self) -> bool {
-        self.inner.read_only()
-    }
 
     pub fn stats(&self) -> String {
         self.inner.stats().to_string()

@@ -27,11 +27,12 @@ drop-in shim for the `faunadb` JS driver's `Client.query`.
   seed. `Now()` is fixed for the whole transaction.
 - Transactions are atomic: a query that errors leaves no writes behind.
 - Forks are `Clone`: seed once, fork per test.
-- **Read-only mode** simulates a `server-readonly` key: every write, every
-  `Call` and listing roles/keys/databases answer Fauna's `permission denied`
-  (403) exactly where the server would, while reads keep working. It also
-  lets one seeded emulator be shared by tests that only read, since a
-  read-only instance is guaranteed never to change.
+- **Read-only forks** (`fork('read-only')`) simulate a `server-readonly`
+  key: every write, every `Call` and listing roles/keys/databases answer
+  Fauna's `permission denied` (403) exactly where the server would, while
+  reads keep working. A fresh emulator is always writable; the seeded base
+  is forked once, and that one read-only copy can be shared by every test
+  that only reads, since nothing can change it.
 - Loads a **schema bundle**: one JSON file listing the collections, indexes,
   functions and roles a test database should start with, each written as
   the params object of the corresponding `Create*` call. Seed it once and
@@ -103,9 +104,8 @@ await client.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))
 
 const fork = emu.fork()                      // independent copy; the base is untouched
 
-emu.setReadOnly(true)                        // now a server-readonly key: writes and Call → permission denied
-const shared = emu.client()                  // safe to share between tests; nothing can mutate it
-const writable = emu.fork({ readOnly: false })
+const shared = emu.fork('read-only')         // a server-readonly key: writes and Call → permission denied;
+                                             // one copy can be shared by every test that only reads
 ```
 
 In vitest, replace the module that exports your `faunaClient` with

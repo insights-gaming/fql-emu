@@ -443,11 +443,11 @@ Spec and tests:
 `MoveDatabase`, roles/ABAC evaluation.
 
 **The emulator** stores roles as inert documents, runs every query with
-admin privileges (or, in read-only mode, as a server-readonly key; see
+admin privileges (or, in a read-only fork, as a server-readonly key; see
 below), lets the test set what `CurrentIdentity()` returns, and reports
 everything else as `not emulated`.
 
-### Server-readonly keys (emulator read-only mode)
+### Server-readonly keys (emulator read-only forks)
 
 Built-in key roles are permission sets in
 [`auth/Permissions.scala`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b778ef05952afb01fd493/ext/model/src/main/scala/auth/Permissions.scala).
@@ -457,8 +457,10 @@ else, including `CallFunction` and the unrestricted collection reads, is
 `false`. A denied action is
 [`PermissionDenied`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b778ef05952afb01fd493/ext/model/src/main/scala/ast/Error.scala)
 (code `permission denied`, description "Insufficient privileges to perform
-the action.", HTTP 403). The emulator's read-only mode reproduces what a
-`server-readonly` key sees, verified on the container
+the action.", HTTP 403). A read-only fork of the emulator
+(`Emulator::fork_as(Mode::ReadOnly)`, `emu.fork('read-only')`; a fresh
+emulator is always writable) reproduces what a `server-readonly` key sees,
+verified on the container
 (`conformance/cases/read_only.json`, replayed by the differential runner
 with a `<secret>:<db>:server-readonly` scoped secret):
 
