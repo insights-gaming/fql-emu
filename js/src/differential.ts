@@ -89,6 +89,8 @@ interface Doc {
 interface Suite {
   label: string
   description: string
+  /** Cases run as a server-readonly key: emulator in read-only mode, server via a `:server-readonly` scoped secret. */
+  readOnly: boolean
   nowMicros?: number
   schema?: LObj
   documents: Doc[]
@@ -107,6 +109,7 @@ function loadSuite(file: string): Suite {
   return {
     label,
     description: str(get(root, 'description')) ?? '',
+    readOnly: get(root, 'read_only') === true,
     nowMicros: num(get(root, 'now_micros')),
     schema: isObj(schema) ? schema : undefined,
     documents: arr(get(root, 'documents')).map((d) => {
@@ -261,6 +264,7 @@ interface WasmEmulator {
   set_auto_clock_from_micros(micros: number): void
   set_next_id(id: bigint): void
   set_now_micros(micros: number): void
+  set_read_only(readOnly: boolean): void
 }
 
 const wasm = createRequire(import.meta.url)('../wasm/fql_emu.js') as { FqlEmulator: new () => WasmEmulator }
@@ -301,6 +305,7 @@ function seedEmulator(suite: Suite, shift: number, fixtureShift = shift): WasmEm
     const a = emuQuery(emu, s)
     if (a.status !== 200) throw new Error(`emulator: setup[${i}] failed: ${show(a.body)}`)
   }
+  if (suite.readOnly) emu.set_read_only(true)
   return emu
 }
 
@@ -366,7 +371,17 @@ class Database {
   ) {}
 
   get secret(): string {
-    return `${this.fauna.secret}:${this.path}:admin`
+    return this.secretAs('admin')
+  }
+
+  /** A scoped secret for this database with the given built-in role (`admin`, `server`, `server-readonly`, `client`). */
+  secretAs(role: string): string {
+    return `${this.fauna.secret}:${this.path}:${role}`
+  }
+
+  /** The secret the suite's cases run with. */
+  caseSecret(suite: Suite): string {
+    return suite.readOnly ? this.secretAs('server-readonly') : this.secret
   }
 
   /** Create a child database and wait until its scoped secret answers. */
@@ -535,7 +550,7 @@ async function runSuite(file: string, root: Database, concurrency: number): Prom
           dbStats.seedMs += Date.now() - t1
           for (const i of g) {
             const c = suite.cases[i]
-            const real = await root.fauna.query(db.secret, c.query)
+            const real = await root.fauna.query(db.caseSecret(suite), c.query)
             results[i] = judge(suite, c, emus, real)
           }
         } finally {
@@ -674,7 +689,7 @@ async function probe(root: Database, file: string, queries: string[]): Promise<n
     await db.seed(suite)
     for (const text of queries) {
       const query = parse(text)
-      const real = await root.fauna.query(db.secret, query)
+      const real = await root.fauna.query(db.caseSecret(suite), query)
       const mine = emuQuery(emu, query)
       console.log(`query    ${stringify(query)}\nserver   ${real.status} ${show(real.body)}\nemulator ${mine.status} ${show(mine.body)}\n`)
     }

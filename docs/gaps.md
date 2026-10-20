@@ -37,8 +37,10 @@ Verify anything in doubt with `npm run differential` against a real
 - Inputs on which the server itself throws an internal error (bad `$`
   references in regex replacements, `TimeDiff` overflow, overflowing
   `start`/`length`).
-- Roles and ABAC are never enforced: every query runs as admin and
-  `permission denied` is never raised.
+- Roles and ABAC are never enforced: every query runs as admin, or as a
+  server-readonly key in read-only mode (`set_read_only` /
+  `emu.setReadOnly(true)`, the only situation in which
+  `permission denied` is raised; see `docs/fql-v4-spec.md` §10).
 - TTL expiry never happens (documents keep their `ttl` field).
 - Rate limits, metrics headers, streaming.
 

@@ -80,6 +80,20 @@ impl Emulator {
         self.db.limits.max_documents = n;
     }
 
+    /// Simulate a server-readonly key (`ServerReadOnlyPermissions`): every
+    /// write, every `Call`, and listing roles/keys/databases answer
+    /// `permission denied` (403) where the real server would. Reads,
+    /// `NewId()` and `Now()` still work. A read-only instance never takes a
+    /// query's working copy back, so it can be shared between tests.
+    /// `load_schema` is a setup call and stays available.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.db.read_only = read_only;
+    }
+
+    pub fn read_only(&self) -> bool {
+        self.db.read_only
+    }
+
     /// Run one query (one transaction) against the store. Writes are
     /// committed only if the whole query succeeds.
     pub fn query(&mut self, expr: &Json) -> Response {
@@ -92,8 +106,16 @@ impl Emulator {
         };
         match result {
             Ok(v) => {
-                working.commit_pending();
-                self.db = working;
+                if working.read_only {
+                    // Every write path has already refused, so the working
+                    // copy differs only in clock and id counter; keep just
+                    // those so a shared instance is provably unchanged.
+                    self.db.clock = working.clock;
+                    self.db.next_id = working.next_id;
+                } else {
+                    working.commit_pending();
+                    self.db = working;
+                }
                 Response {
                     // The server answers 201 when the transaction wrote.
                     status: if wrote { 201 } else { 200 },
@@ -189,6 +211,7 @@ impl Emulator {
             "functions": self.db.functions.len(),
             "documents": self.db.doc_count,
             "max_documents": self.db.limits.max_documents,
+            "read_only": self.db.read_only,
         })
     }
 }

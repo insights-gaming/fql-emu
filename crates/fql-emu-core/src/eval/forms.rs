@@ -112,7 +112,21 @@ pub fn dispatch(ctx: &mut Ctx, env: &Env, obj: &Map<String, Json>, pos: &Positio
     let found = with_registry(|r| r.lookup(&keys).map(|f| (f.name, f.handler)));
     match found {
         None => None,
-        Some((name, None)) => Some(one(FaunaError::not_emulated(&format!("the `{}` function", name), pos))),
+        Some((name, None)) => {
+            // A server-readonly key denies these writes (at the position the
+            // server uses) before the emulator would call them not emulated.
+            if ctx.db.read_only {
+                let denied_at = match name {
+                    "insert" | "remove" => Some(pos.clone()),
+                    "create_database" | "create_key" | "create_access_provider" => Some(pos.key(name)),
+                    _ => None,
+                };
+                if let Some(p) = denied_at {
+                    return Some(one(FaunaError::permission_denied(&p)));
+                }
+            }
+            Some(one(FaunaError::not_emulated(&format!("the `{}` function", name), pos)))
+        }
         Some((_, Some(h))) => Some(h(ctx, env, &Args { obj }, pos)),
     }
 }

@@ -23,11 +23,13 @@ interface WasmEmulator {
   fork(): WasmEmulator
   load_schema(bundleJson: string): string
   query(exprJson: string): string
+  read_only(): boolean
   set_auto_clock_from_micros(micros: number): void
   set_identity(identityJson: string): string
   set_max_documents(n: number): void
   set_next_id(id: bigint): void
   set_now_micros(micros: number): void
+  set_read_only(readOnly: boolean): void
   stats(): string
 }
 
@@ -75,6 +77,13 @@ export interface EmulatorOptions {
   now?: Date | number
   /** Seed for `NewId()` and auto-generated document ids. */
   nextId?: number | bigint
+  /** Start in read-only mode; see `Emulator.setReadOnly`. */
+  readOnly?: boolean
+}
+
+export interface ForkOptions {
+  /** Read-only mode for the fork. Defaults to the parent's setting. */
+  readOnly?: boolean
 }
 
 /** `Emulator.stats()`. Keys mirror the Rust side. */
@@ -84,6 +93,7 @@ export interface EmulatorStats {
   functions: number
   documents: number
   max_documents: number
+  read_only: boolean
 }
 
 export interface SupportedForm {
@@ -250,6 +260,7 @@ export class Emulator {
     if (opts.maxDocuments !== undefined) emu.setMaxDocuments(opts.maxDocuments)
     if (opts.now !== undefined) emu.setNow(opts.now)
     if (opts.nextId !== undefined) emu.setNextId(opts.nextId)
+    if (opts.readOnly !== undefined) emu.setReadOnly(opts.readOnly)
     return emu
   }
 
@@ -275,9 +286,15 @@ export class Emulator {
     return this.#default.query<T>(expr, options)
   }
 
-  /** An independent copy of the current state (documents, schema, clock, id seed, limits). */
-  fork(): Emulator {
-    return new Emulator(this.#wasm.fork(), this.#clockMicros)
+  /**
+   * An independent copy of the current state (documents, schema, clock, id
+   * seed, limits, read-only flag). `fork({ readOnly: false })` gives a
+   * writable copy of a read-only base.
+   */
+  fork(opts: ForkOptions = {}): Emulator {
+    const f = new Emulator(this.#wasm.fork(), this.#clockMicros)
+    if (opts.readOnly !== undefined) f.setReadOnly(opts.readOnly)
+    return f
   }
 
   /**
@@ -318,11 +335,34 @@ export class Emulator {
 
   /**
    * What `CurrentIdentity()` returns (`null` clears it). Roles/ABAC are not
-   * enforced: queries always run as admin.
+   * enforced: queries run as admin, or as a server-readonly key in read-only
+   * mode (`setReadOnly`).
    */
   setIdentity(ref: values.Ref | null): void {
     const out = this.#wasm.set_identity(JSON.stringify(wrap(ref)))
     if (out !== 'null') throw new Error(`fql-emu: setIdentity failed: ${out}`)
+  }
+
+  /**
+   * Simulate a **server-readonly key**. Every write (`Create`, `Update`,
+   * `Delete`, `CreateCollection`, ...), every `Call`, and listing
+   * `Roles()` / `Keys()` / `Databases()` is rejected with Fauna's own
+   * `permission denied` error (HTTP 403, `errors.PermissionDenied` in the
+   * driver) at the position the real server reports. Reads, `NewId()` and
+   * `Now()` keep working.
+   *
+   * Two uses: testing code paths that run with a read-only key, and sharing
+   * one seeded emulator between tests without forking, since a read-only
+   * instance is guaranteed never to be mutated by a query. `loadSchema` is
+   * a setup call and remains available either way.
+   */
+  setReadOnly(readOnly: boolean): void {
+    this.#wasm.set_read_only(readOnly)
+  }
+
+  /** Whether `setReadOnly(true)` is in effect. */
+  get readOnly(): boolean {
+    return this.#wasm.read_only()
   }
 
   /** Change the document cap (default 5 000). */
@@ -387,7 +427,10 @@ export interface MockFaunaClientModule {
  * ```
  *
  * With a single emulator: `vi.mock('./faunaClient', () => mockFaunaClient(emu))`
- * where `emu` comes from `vi.hoisted`.
+ * where `emu` comes from `vi.hoisted`. For a suite that only reads, seed
+ * once and call `emu.setReadOnly(true)` instead of forking per test: a
+ * read-only emulator cannot be changed by any query, so the tests can share
+ * it safely.
  */
 export function mockFaunaClient(emu: Emulator | (() => Emulator)): MockFaunaClientModule {
   const resolve = typeof emu === 'function' ? emu : () => emu

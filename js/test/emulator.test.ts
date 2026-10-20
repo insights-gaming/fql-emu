@@ -292,7 +292,7 @@ describe('limits and stats', () => {
   it('maxDocuments is applied and reported', () => {
     expect(createEmulator().stats().max_documents).toBe(5000)
     const emu = createEmulator({ maxDocuments: 2 })
-    expect(emu.stats()).toEqual({ collections: 0, indexes: 0, functions: 0, documents: 0, max_documents: 2 })
+    expect(emu.stats()).toEqual({ collections: 0, indexes: 0, functions: 0, documents: 0, max_documents: 2, read_only: false })
     expect(() => emu.setMaxDocuments(-1)).toThrow(RangeError)
   })
 
@@ -314,5 +314,107 @@ describe('free()', () => {
     const base = createEmulator()
     base.fork().free()
     expect(await base.query(1)).toBe(1)
+  })
+})
+
+describe('readOnly', () => {
+  const seeded = () => {
+    const emu = createEmulator({ now: JAN_1_2024 })
+    emu.loadSchema({
+      collections: [{ name: 'users' }],
+      functions: [
+        { name: 'greet', body: { '@query': { lambda: 'n', expr: { concat: ['hi ', { var: 'n' }] }, api_version: '4' } } },
+      ],
+    })
+    return emu
+  }
+
+  it('is off by default and reported by the getter and stats()', () => {
+    const emu = seeded()
+    expect(emu.readOnly).toBe(false)
+    expect(emu.stats().read_only).toBe(false)
+    emu.setReadOnly(true)
+    expect(emu.readOnly).toBe(true)
+    expect(emu.stats().read_only).toBe(true)
+    expect(createEmulator({ readOnly: true }).readOnly).toBe(true)
+  })
+
+  it('rejects writes and Call with PermissionDenied (403) and leaves the state unchanged', async () => {
+    const emu = seeded()
+    await emu.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))
+    emu.setReadOnly(true)
+    const before = emu.stats()
+
+    const e = await rejection(emu.query(q.Create(q.Collection('users'), { data: { name: 'bob' } })))
+    expect(e).toBeInstanceOf(errors.PermissionDenied)
+    expect(e.requestResult.statusCode).toBe(403)
+    expect(errorsOf(e)).toEqual([
+      { code: 'permission denied', description: 'Insufficient privileges to perform the action.', position: ['create'] },
+    ])
+    expect(await rejection(emu.query(q.CreateCollection({ name: 'c2' })))).toBeInstanceOf(errors.PermissionDenied)
+    expect(await rejection(emu.query(q.Call(q.Function('greet'), 'ada')))).toBeInstanceOf(errors.PermissionDenied)
+    expect(await rejection(emu.query(q.Paginate(q.Roles())))).toBeInstanceOf(errors.PermissionDenied)
+
+    expect(emu.stats()).toEqual(before)
+    const page = await emu.query<{ data: unknown[] }>(q.Paginate(q.Documents(q.Collection('users'))))
+    expect(page.data).toHaveLength(1)
+  })
+
+  it('reads, NewId() and Now() keep working; the clock still advances', async () => {
+    const emu = seeded()
+    emu.setReadOnly(true)
+    expect(await emu.query(q.Exists(q.Collection('users')))).toBe(true)
+    expect(await emu.query(q.Select('name', q.Get(q.Function('greet'))))).toBe('greet')
+    const a = await emu.query<string>(q.NewId())
+    const b = await emu.query<string>(q.NewId())
+    expect(a).not.toBe(b)
+    emu.setNow(null)
+    const t1 = await emu.query<number>(q.ToMicros(q.Now()))
+    const t2 = await emu.query<number>(q.ToMicros(q.Now()))
+    expect(t2).toBeGreaterThan(t1)
+  })
+
+  it('can be switched off again', async () => {
+    const emu = seeded()
+    emu.setReadOnly(true)
+    await rejection(emu.query(q.Create(q.Collection('users'), {})))
+    emu.setReadOnly(false)
+    await emu.query(q.Create(q.Collection('users'), {}))
+    expect(emu.stats().documents).toBe(1)
+  })
+
+  it('forks inherit the flag unless overridden; the base stays untouched', async () => {
+    const base = seeded()
+    base.setReadOnly(true)
+    expect(base.fork().readOnly).toBe(true)
+    const writable = base.fork({ readOnly: false })
+    expect(writable.readOnly).toBe(false)
+    await writable.query(q.Create(q.Collection('users'), {}))
+    expect(writable.stats().documents).toBe(1)
+    expect(base.stats().documents).toBe(0)
+    expect(base.readOnly).toBe(true)
+    const ro = seeded().fork({ readOnly: true })
+    expect(ro.readOnly).toBe(true)
+  })
+
+  it('one shared instance serves many clients safely', async () => {
+    const shared = seeded()
+    await shared.query(q.Create(q.Ref(q.Collection('users'), '1'), { data: { name: 'ada' } }))
+    shared.setReadOnly(true)
+    const clients = Array.from({ length: 10 }, () => shared.client())
+    await Promise.all(
+      clients.map(async (c, i) => {
+        expect(await c.query(q.Select(['data', 'name'], q.Get(q.Ref(q.Collection('users'), '1'))))).toBe('ada')
+        await expect(c.query(q.Delete(q.Ref(q.Collection('users'), '1')))).rejects.toBeInstanceOf(errors.PermissionDenied)
+        await expect(c.query(q.Update(q.Collection('users'), { data: { i } }))).rejects.toBeInstanceOf(errors.PermissionDenied)
+      }),
+    )
+    expect(shared.stats()).toMatchObject({ documents: 1, collections: 1, read_only: true })
+  })
+
+  it('loadSchema remains available as a setup call', () => {
+    const emu = createEmulator({ readOnly: true })
+    emu.loadSchema({ collections: [{ name: 'users' }] })
+    expect(emu.stats().collections).toBe(1)
   })
 })

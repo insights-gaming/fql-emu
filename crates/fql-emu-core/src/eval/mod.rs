@@ -48,6 +48,18 @@ impl<'a> Ctx<'a> {
     }
 }
 
+/// In read-only mode (a simulated server-readonly key) the action at `pos`
+/// is denied. Callers place this exactly where the server checks the
+/// permission: after argument casts and ref resolution, before validation
+/// of the write itself.
+pub fn deny_if_read_only(ctx: &Ctx, pos: &Position) -> R<()> {
+    if ctx.db.read_only {
+        one(FaunaError::permission_denied(pos))
+    } else {
+        Ok(())
+    }
+}
+
 /// Evaluate an expression.
 pub fn eval(ctx: &mut Ctx, env: &Env, expr: &Json, pos: &Position) -> R<Value> {
     match expr {
@@ -236,6 +248,9 @@ pub fn resolve_function<'c>(ctx: &'c Ctx, v: &Value, pos: &Position) -> R<&'c cr
 /// `Call(fn, args)`: errors inside the body are wrapped in a `call error`.
 pub fn call_function(ctx: &mut Ctx, f: &Value, args: Value, pos: &Position) -> R<Value> {
     let def = resolve_function(ctx, f, &pos.key("call"))?;
+    // A server-readonly key cannot call any function (`CallFunction` is not
+    // in `ServerReadOnlyPermissions`), whatever the function's own role.
+    deny_if_read_only(ctx, pos)?;
     let body = def.body.clone();
     match apply_lambda(ctx, &body, args, pos) {
         Ok(v) => Ok(v),

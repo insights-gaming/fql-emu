@@ -152,6 +152,12 @@ pub struct Database {
     pub clock: Clock,
     pub identity: Option<Ref>,
     pub limits: Limits,
+    /// Simulates a server-readonly key (`ServerReadOnlyPermissions`): every
+    /// write, every `Call`, and listing roles/keys/databases/access
+    /// providers answer `permission denied` (403). Reads, `NewId()` and
+    /// `Now()` still work. Also a guarantee that a shared instance is never
+    /// mutated by a query.
+    pub read_only: bool,
 }
 
 impl Default for Database {
@@ -214,6 +220,7 @@ impl Database {
             clock: Clock::Auto { last: Timestamp::of_micros(1_600_000_000_000_000) },
             identity: None,
             limits: Limits::default(),
+            read_only: false,
         }
     }
 

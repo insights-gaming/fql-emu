@@ -84,6 +84,15 @@ impl FqlEmulator {
         self.inner.set_max_documents(n as usize);
     }
 
+    /// Simulate a server-readonly key; see `Emulator::set_read_only`.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.inner.set_read_only(read_only);
+    }
+
+    pub fn read_only(&self) -> bool {
+        self.inner.read_only()
+    }
+
     pub fn stats(&self) -> String {
         self.inner.stats().to_string()
     }

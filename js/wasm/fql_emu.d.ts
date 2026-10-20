@@ -18,6 +18,7 @@ export class FqlEmulator {
      * (`txn_time_micros` is `null` when the body was not valid JSON).
      */
     query(expr_json: string): string;
+    read_only(): boolean;
     set_auto_clock_from_micros(micros: number): void;
     /**
      * `identity_json` is a `{"@ref": ...}` value, or `null`.
@@ -29,6 +30,10 @@ export class FqlEmulator {
      */
     set_next_id(id: bigint): void;
     set_now_micros(micros: number): void;
+    /**
+     * Simulate a server-readonly key; see `Emulator::set_read_only`.
+     */
+    set_read_only(read_only: boolean): void;
     stats(): string;
     /**
      * JSON array of `[name, implemented]` pairs.

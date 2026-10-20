@@ -50,16 +50,17 @@ API:
 
 | | |
 |---|---|
-| `createEmulator({ maxDocuments?, now?, nextId? })` | a fresh, empty database |
+| `createEmulator({ maxDocuments?, now?, nextId?, readOnly? })` | a fresh, empty database |
 | `emu.client(opts?)` | a new `faunadb.Client` on this emulator. `opts` go to the `Client` constructor (`observer`, `queryTimeout`, ...); `secret` and connection options are ignored |
 | `emu.query(expr, options?)` | `client().query` on an internal client |
-| `emu.fork()` | an independent copy (documents, schema, clock, id seed, limits) |
+| `emu.fork({ readOnly? })` | an independent copy (documents, schema, clock, id seed, limits, read-only flag); `{ readOnly: false }` gives a writable copy of a read-only base |
 | `emu.loadSchema(bundle)` | load collections / roles / functions / indexes; throws `SchemaLoadError` (with `.errors`) listing the Fauna errors |
 | `emu.setNow(date \| micros \| null)` | pin `Now()` and every written `ts`; `null` returns to the auto clock |
 | `emu.setNextId(n \| bigint)` | seed for `NewId()` (use a `bigint` above 2^53, e.g. snowflake-sized ids) |
 | `emu.setIdentity(ref \| null)` | what `CurrentIdentity()` returns |
+| `emu.setReadOnly(flag)` / `emu.readOnly` | simulate a `server-readonly` key (see below) |
 | `emu.setMaxDocuments(n)` | change the document cap |
-| `emu.stats()` | `{ collections, indexes, functions, documents, max_documents }` |
+| `emu.stats()` | `{ collections, indexes, functions, documents, max_documents, read_only }` |
 | `emu.free()` | release the wasm memory now (otherwise it is freed on GC) |
 | `Emulator.supportedForms()` | `[{ name, implemented }]` for every recognised form |
 | `mockFaunaClient(emu \| () => emu)` | a `{ faunaClient, query }` module for `vi.mock` |
@@ -98,6 +99,40 @@ from `vi.hoisted` or a dynamic `import()`, as above. With a single emulator,
 `vi.mock('./faunaClient', () => mockFaunaClient(emu))` works as long as `emu`
 comes from `vi.hoisted`. `test/vimock.test.ts` is a working example.
 
+## Read-only mode
+
+`emu.setReadOnly(true)` (or `createEmulator({ readOnly: true })`,
+`fork({ readOnly: true })`) makes the emulator answer like a
+`server-readonly` key: every write (`Create`, `Update`, `Delete`,
+`CreateCollection`, ...), every `Call`, and listing `Roles()` / `Keys()` /
+`Databases()` is rejected with Fauna's own `permission denied` error (HTTP
+403, `errors.PermissionDenied` in the driver) at the position the real
+server reports, after the same argument checks. Reads, `NewId()` and
+`Now()` keep working, and lazy branches are untouched. The exact rules and
+their sources are in `docs/fql-v4-spec.md` §10.
+
+Two reasons to use it:
+
+- The code under test runs with a read-only key in production, and you want
+  the same failures in tests.
+- A suite that only reads can share one seeded emulator instead of forking
+  per test: a read-only instance cannot be changed by any query, so there is
+  nothing to isolate.
+
+```ts
+const base = createEmulator()
+base.loadSchema(bundle)
+await base.query(q.Create(q.Collection('users'), { data: { name: 'ada' } }))
+base.setReadOnly(true)
+
+// Every test can use base.client() directly ...
+await expect(base.query(q.Create(q.Collection('users'), {}))).rejects.toBeInstanceOf(errors.PermissionDenied)
+// ... and a test that needs to write forks a writable copy.
+const writable = base.fork({ readOnly: false })
+```
+
+`loadSchema` is a setup call and stays available in read-only mode.
+
 ## Determinism
 
 - **Clock.** `setNow(...)` (or `createEmulator({ now })`) pins `Now()`,
@@ -128,7 +163,7 @@ description naming the function, for example:
 code that handles real Fauna errors cannot accidentally pass because of them.
 Out of scope by design: temporal reads (`At`, `ts`, `Events`), child
 databases, keys/tokens/`Login`, role/ABAC enforcement (every query runs as
-admin), TTL expiry, streaming. `Emulator.supportedForms()` lists what is
+admin, or as a server-readonly key in read-only mode), TTL expiry, streaming. `Emulator.supportedForms()` lists what is
 implemented right now.
 
 ## Differential testing against real Fauna

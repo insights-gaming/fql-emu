@@ -73,6 +73,13 @@ class FqlEmulator {
         }
     }
     /**
+     * @returns {boolean}
+     */
+    read_only() {
+        const ret = wasm.fqlemulator_read_only(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * @param {number} micros
      */
     set_auto_clock_from_micros(micros) {
@@ -115,6 +122,13 @@ class FqlEmulator {
      */
     set_now_micros(micros) {
         wasm.fqlemulator_set_now_micros(this.__wbg_ptr, micros);
+    }
+    /**
+     * Simulate a server-readonly key; see `Emulator::set_read_only`.
+     * @param {boolean} read_only
+     */
+    set_read_only(read_only) {
+        wasm.fqlemulator_set_read_only(this.__wbg_ptr, read_only);
     }
     /**
      * @returns {string}

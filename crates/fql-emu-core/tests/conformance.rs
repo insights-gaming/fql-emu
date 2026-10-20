@@ -7,6 +7,7 @@
 //!   "description": "what this file covers",
 //!   "source": "ext/api/src/test/scala/queries/StringFunctionsSpec.scala",
 //!   "now_micros": 1600000000000000,          // optional: pin Now()
+//!   "read_only": true,                        // optional: run the cases as a server-readonly key
 //!   "schema": { "collections": [...], ... },  // optional: Emulator::load_schema bundle
 //!   "documents": [                            // optional: seeded after `schema`, before `setup`
 //!     { "collection": "users", "id": "1", "data": {...}, "ts": 1600000000000000 }
@@ -31,6 +32,10 @@
 //! only when given. `todo` cases are allowed to fail (and reported when
 //! they unexpectedly pass, so the marker can be removed). Set
 //! `FQL_CONFORMANCE_SHOW_TODO=1` to print why each `todo` case fails.
+//!
+//! `read_only` switches the seeded emulator to read-only mode
+//! (`Emulator::set_read_only`) after `schema`, `documents` and `setup`
+//! have run, so the cases see what a server-readonly key sees.
 //!
 //! `documents` seeds documents directly into the store
 //! (`Database::seed_document`), bypassing `Create`: `collection` (must
@@ -79,6 +84,10 @@ fn run_suite(path: &PathBuf) -> Outcome {
             let r = base.query(q);
             assert!(r.status == 200 || r.status == 201, "{}: setup[{}] failed: {}", file, i, r.body);
         }
+    }
+
+    if suite.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false) {
+        base.set_read_only(true);
     }
 
     let mut out = Outcome { failures: vec![], unexpected_passes: vec![], passed: 0, todo: 0 };

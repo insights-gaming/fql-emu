@@ -1373,6 +1373,11 @@ fn documents_elems(ctx: &Ctx, coll: &Ref, pos: &Position) -> R<Vec<SEvent>> {
             "collections" => db.collections.keys().map(|n| Ref::collection(n)).collect(),
             "indexes" => db.indexes.keys().map(|n| Ref::index(n)).collect(),
             "functions" => db.functions.keys().map(|n| Ref::function(n)).collect(),
+            // `ServerReadOnlyPermissions` has no unrestricted collection
+            // read, so a read-only key cannot list these.
+            "roles" | "databases" | "keys" | "access_providers" if db.read_only => {
+                return one(FaunaError::permission_denied(pos))
+            }
             "roles" => db.roles.keys().map(|n| Ref::role(n)).collect(),
             // The emulator cannot create any of these.
             "databases" | "keys" | "tokens" | "access_providers" => vec![],

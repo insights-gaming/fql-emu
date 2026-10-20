@@ -48,6 +48,8 @@ fn create_collection(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R
     let key = if args.get("create_collection").is_some() { "create_collection" } else { "create_class" };
     let v = args.eval(ctx, env, key, pos)?;
     let params = cast::object(&v, &pos.key(key))?;
+    // Schema writes are denied before their params are validated.
+    super::deny_if_read_only(ctx, &pos.key(key))?;
     let ts = ctx.ts;
     ctx.db.create_collection(params, ts, &pos.key(key))
 }
@@ -56,6 +58,8 @@ fn create_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Valu
     ctx.wrote = true;
     let v = args.eval(ctx, env, "create_index", pos)?;
     let params = cast::object(&v, &pos.key("create_index"))?;
+    // Schema writes are denied before their params are validated.
+    super::deny_if_read_only(ctx, &pos.key("create_index"))?;
     let ts = ctx.ts;
     ctx.db.create_index(params, ts, &pos.key("create_index"))
 }
@@ -64,6 +68,8 @@ fn create_function(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<V
     ctx.wrote = true;
     let v = args.eval(ctx, env, "create_function", pos)?;
     let params = cast::object(&v, &pos.key("create_function"))?;
+    // Schema writes are denied before their params are validated.
+    super::deny_if_read_only(ctx, &pos.key("create_function"))?;
     let ts = ctx.ts;
     ctx.db.create_function(params, ts, &pos.key("create_function"))
 }
@@ -72,6 +78,8 @@ fn create_role(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value
     ctx.wrote = true;
     let v = args.eval(ctx, env, "create_role", pos)?;
     let params = cast::object(&v, &pos.key("create_role"))?;
+    // Schema writes are denied before their params are validated.
+    super::deny_if_read_only(ctx, &pos.key("create_role"))?;
     let ts = ctx.ts;
     ctx.db.create_role(params, ts, &pos.key("create_role"))
 }
@@ -393,6 +401,7 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
             if ctx.db.collections.contains_key(name) {
                 (name.clone(), None)
             } else if NATIVE_COLLECTIONS.contains(&name.as_str()) {
+                super::deny_if_read_only(ctx, &cpos)?;
                 // The server fails internally resolving a native name here.
                 return native_create_not_emulated(name, &cpos);
             } else {
@@ -401,6 +410,7 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         }
         Value::Ref(r) if r.is_collection_ref() => (r.id.clone(), None),
         Value::Ref(r) if r.is_native() => {
+            super::deny_if_read_only(ctx, &cpos)?;
             return match r.id.as_str() {
                 "collections" => ctx.db.create_collection(&params, ts, &cpos),
                 "indexes" => ctx.db.create_index(&params, ts, &cpos),
@@ -416,6 +426,8 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         _ => unreachable!("cast checked above"),
     };
 
+    // The permission check precedes the already-exists and uniqueness checks.
+    super::deny_if_read_only(ctx, &cpos)?;
     let id = match explicit_id {
         Some(id) => {
             if ctx.db.exists_document(&coll, &id) {
@@ -469,6 +481,8 @@ fn update_or_replace(partial: bool, ctx: &mut Ctx, env: &Env, args: &Args, pos: 
             Some(d) => d.clone(),
             None => return one(FaunaError::document_not_found(&vp)),
         };
+        // Denied at the form position, after the document resolved.
+        super::deny_if_read_only(ctx, pos)?;
         let base = if partial { prev.fields.clone() } else { Object::new() };
         return write_document(ctx, &coll, &r.id, Some(&prev), &base, &params, pos);
     }
@@ -528,6 +542,8 @@ fn opt_long_field(params: &Object, key: &str, current: Option<i64>, pos: &Positi
 /// `Update`/`Replace` of collection, index, function and role documents.
 /// Errors are reported at `pos` (the form), like the server's write path.
 fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &Position) -> R<Value> {
+    // Denied before the params' fields are validated.
+    super::deny_if_read_only(ctx, pos)?;
     let ts = ctx.ts;
     if params.values().any(contains_set) {
         return one(FaunaError::not_emulated("storing a set value in a schema document", pos));
@@ -623,12 +639,17 @@ fn delete(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
     if let Some(coll) = r.document_collection() {
         let coll = coll.to_string();
+        if !ctx.db.exists_document(&coll, &r.id) {
+            return one(FaunaError::document_not_found(pos));
+        }
+        super::deny_if_read_only(ctx, pos)?;
         // The server returns the deleted (previous) version, with its ts.
         return match ctx.db.remove_document(&coll, &r.id) {
             None => one(FaunaError::document_not_found(pos)),
             Some(d) => Ok(ctx.db.render_document(&coll, &r.id, &d)),
         };
     }
+    super::deny_if_read_only(ctx, pos)?;
     // Schema deletes take effect at commit: for the rest of the transaction
     // the name still resolves and the documents are still readable.
     if r.is_collection_ref() {

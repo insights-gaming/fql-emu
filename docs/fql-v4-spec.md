@@ -176,7 +176,7 @@ Spec: [`Error.scala`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b
 | `transaction aborted` | `Abort(msg)`; description is `msg` | 400 |
 | `call error` | a UDF body failed; see `cause` | 400 |
 | `stack overflow` | depth > 200 | 400 |
-| `permission denied` | ABAC / key role. **The emulator runs as admin and never raises it.** | 403 |
+| `permission denied` | ABAC / key role. The emulator raises it only in read-only mode (§10) | 403 |
 | `missing identity` | `CurrentIdentity()` without an identity | 400 |
 | `feature not available` | server-side flags | 400 |
 
@@ -443,8 +443,58 @@ Spec and tests:
 `MoveDatabase`, roles/ABAC evaluation.
 
 **The emulator** stores roles as inert documents, runs every query with
-admin privileges, lets the test set what `CurrentIdentity()` returns, and
-reports everything else as `not emulated`.
+admin privileges (or, in read-only mode, as a server-readonly key; see
+below), lets the test set what `CurrentIdentity()` returns, and reports
+everything else as `not emulated`.
+
+### Server-readonly keys (emulator read-only mode)
+
+Built-in key roles are permission sets in
+[`auth/Permissions.scala`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b778ef05952afb01fd493/ext/model/src/main/scala/auth/Permissions.scala).
+`ServerReadOnlyPermissions.checkAction` allows only `ReadInstance`,
+`HistoryRead`, `ReadIndex`, `ReadSchema` and `Logging`; everything
+else, including `CallFunction` and the unrestricted collection reads, is
+`false`. A denied action is
+[`PermissionDenied`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b778ef05952afb01fd493/ext/model/src/main/scala/ast/Error.scala)
+(code `permission denied`, description "Insufficient privileges to perform
+the action.", HTTP 403). The emulator's read-only mode reproduces what a
+`server-readonly` key sees, verified on the container
+(`conformance/cases/read_only.json`, replayed by the differential runner
+with a `<secret>:<db>:server-readonly` scoped secret):
+
+- Reads, `Exists`, `Paginate`/`Count` of documents, indexes, collections,
+  functions, tokens and credentials, `NewId()`, `Now()` and `Abort` behave
+  exactly as for a server key.
+- Document `Create` (with or without an id, into a collection or a native
+  collection ref) is denied at `[.., "create"]`
+  ([`WriteAdaptor.liftPermissionDenied`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b778ef05952afb01fd493/ext/model/src/main/scala/ast/functions/WriteAdaptor.scala)),
+  **after** the casts, collection resolution and ref validation
+  (`invalid ref`, `invalid argument`, `validation failed` still win) and
+  **before** the already-exists, uniqueness and set-value checks.
+- Document `Update`/`Replace`/`Delete` are denied at the form position,
+  after the document resolved (`instance not found` wins) and after the
+  `params` cast.
+- Schema creates (`CreateCollection`, `CreateIndex`, `CreateFunction`,
+  `CreateRole`, `CreateDatabase`, `CreateKey`, `CreateAccessProvider`)
+  are denied at `[.., "<form>"]` once the argument is an object, before any
+  field validation (`{"name": 5}` is `permission denied`, `"x"` is
+  `invalid argument`). Schema `Update`/`Delete` are denied at the form
+  position after the ref resolved, before field validation.
+- `Call` of **any** function is denied at the form position after the
+  function resolved and before arity or body evaluation
+  ([`LambdaWrapper`](https://github.com/fauna/faunadb/blob/4f8f8be39012f13f2a7b778ef05952afb01fd493/ext/model/src/main/scala/doc/LambdaWrapper.scala)),
+  whatever `role` the function carries.
+- `Insert`/`Remove` are denied at the form position.
+- `Paginate`/`Count` of `Roles()`, `Keys()`, `Databases()` and
+  `AccessProviders()` are denied at the consuming form's key
+  (`["paginate"]`, `["count"]`); `Exists` of such a set is `false`.
+- Lazy branches are untouched (`If(false, Create(..), x)` succeeds); `Do`
+  stops at the first denial; array elements are all evaluated and every
+  denial is reported.
+
+Not reproduced: the server also rejects `CreateKey` / `CreateRole` for
+plain `server` keys and applies ABAC for `client` keys and tokens; the
+emulator has only the two modes (admin, server-readonly).
 
 ## 11. Conformance workflow
 
