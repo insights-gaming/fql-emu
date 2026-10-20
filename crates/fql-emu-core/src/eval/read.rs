@@ -57,19 +57,20 @@ fn native_kind(r: &crate::value::Ref) -> Option<&'static str> {
 fn get(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "get", pos)?;
     ts_not_emulated(ctx, env, args, pos)?;
+    // `Casts.Identifier` fails at `["get"]` (unresolved schema refs become
+    // `invalid ref` there); `GetFunction` itself reports not-found at the
+    // form position.
     let p = pos.key("get");
     match &v {
         Value::Ref(r) => {
-            if let Some(coll) = r.document_collection() {
-                if !ctx.db.collections.contains_key(coll) {
-                    return one(FaunaError::unresolved_ref("collection", coll, &p));
-                }
+            if let Some(e) = super::collection::unresolved_ref(ctx, &v, &p) {
+                return one(e);
             }
             match ctx.db.get_by_ref(r) {
                 Some(doc) => Ok(doc),
                 None => match native_kind(r) {
-                    Some(kind) => one(FaunaError::native_not_found(kind, &p)),
-                    None => one(FaunaError::document_not_found(&p)),
+                    Some(kind) => one(FaunaError::native_not_found(kind, pos)),
+                    None => one(FaunaError::document_not_found(pos)),
                 },
             }
         }
@@ -79,16 +80,16 @@ fn get(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
             match elems.first() {
                 Some(Value::Ref(r)) => match ctx.db.get_by_ref(r) {
                     Some(doc) => Ok(doc),
-                    None => one(FaunaError::document_not_found(&p)),
+                    None => one(FaunaError::document_not_found(pos)),
                 },
                 Some(Value::Array(items)) => match items.last() {
                     Some(Value::Ref(r)) => match ctx.db.get_by_ref(r) {
                         Some(doc) => Ok(doc),
-                        None => one(FaunaError::document_not_found(&p)),
+                        None => one(FaunaError::document_not_found(pos)),
                     },
-                    _ => one(FaunaError::set_not_found(&p)),
+                    _ => one(FaunaError::set_not_found(pos)),
                 },
-                _ => one(FaunaError::set_not_found(&p)),
+                _ => one(FaunaError::set_not_found(pos)),
             }
         }
         other => one(FaunaError::invalid_argument(&[Type::Ref, Type::Set], other.rtype(), &p)),

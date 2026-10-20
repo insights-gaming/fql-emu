@@ -259,12 +259,16 @@ impl FaunaError {
         FaunaError::invalid_argument_msg("Sets are not compatible.", pos)
     }
 
+    /// `MixedArguments`: "Arguments cannot be of different types, expected A or B."
     pub fn mixed_arguments(expected: &[Type], pos: &Position) -> FaunaError {
         let names: Vec<String> = expected.iter().map(|t| t.to_string()).collect();
-        FaunaError::invalid_argument_msg(
-            format!("Mixed argument types: expected all of {}.", names.join(", ")),
-            pos,
-        )
+        let suffix = match names.as_slice() {
+            [] => String::new(),
+            [t] => format!(", expected {}", t),
+            [a, b] => format!(", expected {} or {}", a, b),
+            ts => format!(", expected {}, or {}", ts[..ts.len() - 1].join(", "), ts[ts.len() - 1]),
+        };
+        FaunaError::invalid_argument_msg(format!("Arguments cannot be of different types{}.", suffix), pos)
     }
 
     /// `UnresolvedRefError`: a `Collection("x")`, `Index("x")`, etc. whose

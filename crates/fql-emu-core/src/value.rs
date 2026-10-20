@@ -410,15 +410,21 @@ impl Value {
             Value::Bytes(_) => Type::Bytes,
             Value::Time(_) => Type::Time,
             Value::Date(_) => Type::Date,
+            // `Type.getType` matches on the ref's collection id, so the
+            // native collection refs type as their own kind too:
+            // `Collections()` is a Collection Ref, `Indexes()` an Index Ref.
             Value::Ref(r) => {
-                if r.is_collection_ref() {
+                let native = if r.is_native() { r.id.as_str() } else { "" };
+                if r.is_collection_ref() || native == "collections" || native == "classes" {
                     Type::CollectionRef
-                } else if r.is_index_ref() {
+                } else if r.is_index_ref() || native == "indexes" {
                     Type::IndexRef
-                } else if r.is_database_ref() {
+                } else if r.is_database_ref() || native == "databases" {
                     Type::DatabaseRef
-                } else if r.is_function_ref() {
+                } else if r.is_function_ref() || native == "functions" {
                     Type::UserFunctionRef
+                } else if native == "keys" {
+                    Type::KeyRef
                 } else if r.is_role_ref() {
                     Type::RoleRef
                 } else {
