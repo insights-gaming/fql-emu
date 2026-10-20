@@ -2,6 +2,10 @@
 # Build the wasm artifact into js/wasm/. Requires wasm-pack (or run via nix:
 #   nix shell nixpkgs#wasm-pack nixpkgs#wasm-bindgen-cli nixpkgs#binaryen nixpkgs#lld --command bash scripts/build-wasm.sh
 # ).
+#
+# Usage: bash scripts/build-wasm.sh [--release|--dev|--profiling]
+# Set WASM_OUT_DIR to build somewhere other than js/wasm/ (used by
+# scripts/check-wasm-fresh.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -15,9 +19,15 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 1
 fi
 PROFILE="${1:---release}"
-wasm-pack build crates/fql-emu-wasm --target nodejs --out-dir "$ROOT/js/wasm" --out-name fql_emu "$PROFILE"
+OUT="${WASM_OUT_DIR:-$ROOT/js/wasm}"
+# Panic locations embed source paths; strip the machine-specific prefixes so
+# the release artifact is byte-reproducible across machines (given the same
+# rustc / wasm-bindgen / wasm-opt versions; see scripts/check-wasm-fresh.sh).
+CARGO_HOME_DIR="${CARGO_HOME:-$HOME/.cargo}"
+export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="${CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS:-} --remap-path-prefix=$CARGO_HOME_DIR=/cargo --remap-path-prefix=$ROOT=/fql-emu"
+wasm-pack build crates/fql-emu-wasm --target nodejs --out-dir "$OUT" --out-name fql_emu "$PROFILE"
 # wasm-pack writes a package.json and .gitignore we don't want inside js/wasm.
-rm -f "$ROOT/js/wasm/.gitignore" "$ROOT/js/wasm/README.md"
+rm -f "$OUT/.gitignore" "$OUT/README.md"
 # js/ is an ESM package; the generated loader is CommonJS.
-echo '{ "type": "commonjs" }' > "$ROOT/js/wasm/package.json"
-ls -la "$ROOT/js/wasm"
+echo '{ "type": "commonjs" }' > "$OUT/package.json"
+ls -la "$OUT"

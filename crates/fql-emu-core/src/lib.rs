@@ -35,6 +35,10 @@ use value::{Timestamp, Value};
 pub struct Response {
     pub status: u16,
     pub body: Json,
+    /// Transaction time in microseconds (the server's `x-txn-time`
+    /// header). `None` when the request never reached a transaction
+    /// (e.g. the body was not valid JSON).
+    pub txn_time_micros: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -88,13 +92,17 @@ impl Emulator {
         match result {
             Ok(v) => {
                 self.db = working;
-                Response { status: 200, body: json!({ "resource": wire::encode(&v) }) }
+                Response {
+                    status: 200,
+                    body: json!({ "resource": wire::encode(&v) }),
+                    txn_time_micros: Some(ts.micros()),
+                }
             }
             Err(errs) => {
                 // Keep the clock moving so a failed write still advances time
                 // the way a real transaction attempt would.
                 self.db.clock = working.clock;
-                error_response(errs)
+                Response { txn_time_micros: Some(ts.micros()), ..error_response(errs) }
             }
         }
     }
@@ -181,7 +189,11 @@ impl Emulator {
 
 pub fn error_response(errs: Vec<FaunaError>) -> Response {
     let status = error::status_code(&errs);
-    Response { status, body: json!({ "errors": errs.iter().map(|e| e.to_json()).collect::<Vec<_>>() }) }
+    Response {
+        status,
+        body: json!({ "errors": errs.iter().map(|e| e.to_json()).collect::<Vec<_>>() }),
+        txn_time_micros: None,
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +286,18 @@ mod tests {
         e.set_now_micros(1_000_000);
         assert_eq!(q(&mut e, json!({"now": null})), json!({"@ts": "1970-01-01T00:00:01.000000000Z"}));
         assert_eq!(q(&mut e, json!({"to_micros": {"time": "now"}})), json!(1_000_000));
+    }
+
+    #[test]
+    fn responses_carry_the_transaction_time() {
+        let mut e = Emulator::new();
+        e.set_now_micros(1_000_000);
+        assert_eq!(e.query(&json!(1)).txn_time_micros, Some(1_000_000));
+        assert_eq!(e.query(&json!({"abort": "x"})).txn_time_micros, Some(1_000_000));
+        e.set_auto_clock_from_micros(5);
+        assert_eq!(e.query(&json!(1)).txn_time_micros, Some(6));
+        assert_eq!(e.query(&json!(1)).txn_time_micros, Some(7));
+        assert_eq!(e.query_str("{").txn_time_micros, None);
     }
 
     #[test]
