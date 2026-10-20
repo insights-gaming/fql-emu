@@ -254,6 +254,12 @@ fn document_fields(ctx: &Ctx, coll: &str, prev: &Object, params: &Object, vpos: 
         return one(FaunaError::validation_failed(failures, vpos));
     }
     fields.retain(|k, _| matches!(k.as_str(), "data" | "constraints" | "ttl"));
+    // The server does not store an empty `data` object: after
+    // `Create(ref, { data: {} })`, or an `Update` that removes every field,
+    // `Get` has no `data` at all. Nested empty objects are kept.
+    if matches!(fields.get("data"), Some(Value::Object(o)) if o.is_empty()) {
+        fields.remove("data");
+    }
     // `UserDocumentWriteConfig.adjustTTL`: the collection TTL applies when
     // the document has none.
     if !fields.contains_key("ttl") {

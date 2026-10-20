@@ -19,6 +19,10 @@
     { "create": { "ref": { "collection": "posts" }, "id": "1" }, "params": { "object": { "data": { "object": { "title": "hello" } } } } }
   ],
   "cases": [
+    { "name": "create with empty data stores no data", "query": {"select":"data","from":{"create":{"collection":"users"},"params":{"object":{"data":{"object":{}}}}},"default":"NO_DATA"}, "expect": "NO_DATA" },
+    { "name": "update removing every field stores no data", "query": {"let":[{"d":{"create":{"collection":"users"},"params":{"object":{"data":{"object":{"a":1}}}}}}],"in":{"select":"data","from":{"update":{"select":"ref","from":{"var":"d"}},"params":{"object":{"data":{"object":{"a":null}}}}},"default":"NO_DATA"}}, "expect": "NO_DATA" },
+    { "name": "replace with empty data stores no data", "query": {"select":"data","from":{"replace":{"select":"ref","from":{"create":{"collection":"users"},"params":{"object":{"data":{"object":{"a":1}}}}}},"params":{"object":{"data":{"object":{}}}}},"default":"NO_DATA"}, "expect": "NO_DATA" },
+    { "name": "nested empty objects in data are kept", "query": {"let":[{"d":{"create":{"collection":"users"},"params":{"object":{"data":{"object":{"a":{"object":{"b":1}},"c":1}}}}}}],"in":{"select":"data","from":{"update":{"select":"ref","from":{"var":"d"}},"params":{"object":{"data":{"object":{"a":{"object":{"b":null}}}}}}}}}, "expect": { "a": {}, "c": 1 } },
     { "name": "create with explicit ref", "query": { "create": { "ref": { "collection": "users" }, "id": "10" }, "params": { "object": { "data": { "object": { "a": 1 } } } } },
       "expect": { "ref": { "@ref": { "id": "10", "collection": { "@ref": { "id": "users", "collection": { "@ref": { "id": "collections" } } } } } }, "ts": 1600000000000000, "data": { "a": 1 } } },
     { "name": "create with numeric id", "query": { "select": ["ref"], "from": { "create": { "ref": { "collection": "users" }, "id": 11 } } },
