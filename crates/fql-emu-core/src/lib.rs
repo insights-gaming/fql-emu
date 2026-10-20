@@ -85,15 +85,17 @@ impl Emulator {
     pub fn query(&mut self, expr: &Json) -> Response {
         let mut working = self.db.clone();
         let ts = working.clock.next();
-        let result = {
+        let (result, wrote) = {
             let mut ctx = eval::Ctx::new(&mut working, ts);
-            eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root())
+            let r = eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root());
+            (r, ctx.wrote)
         };
         match result {
             Ok(v) => {
                 self.db = working;
                 Response {
-                    status: 200,
+                    // The server answers 201 when the transaction wrote.
+                    status: if wrote { 201 } else { 200 },
                     body: json!({ "resource": wire::encode(&v) }),
                     txn_time_micros: Some(ts.micros()),
                 }
@@ -202,7 +204,7 @@ mod tests {
 
     fn q(e: &mut Emulator, j: Json) -> Json {
         let r = e.query(&j);
-        assert_eq!(r.status, 200, "{}", r.body);
+        assert!(r.status == 200 || r.status == 201, "{}", r.body);
         r.body["resource"].clone()
     }
 
@@ -246,7 +248,7 @@ mod tests {
     fn lambdas_close_over_let() {
         let mut e = Emulator::new();
         let j = json!({
-            "let": [{"n": 10}, {"f": {"lambda": "x", "expr": {"add": [{"var": "x"}, {"var": "n"}]}}}],
+            "let": [{"n": 10}],
             "in": {"call": "nope", "arguments": 1}
         });
         // function doesn't exist

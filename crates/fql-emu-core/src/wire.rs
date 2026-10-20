@@ -153,7 +153,12 @@ pub fn decode_lambda(v: &Json, pos: &Position) -> R<Lambda> {
             return one(FaunaError::invalid_lambda_expr(pos));
         }
     }
-    Ok(Lambda { params: decode_pattern(params, &pos.key("lambda"))?, body: Rc::new(body.clone()), env: Env::empty() })
+    Ok(Lambda {
+        params: decode_pattern(params, &pos.key("lambda"))?,
+        body: Rc::new(body.clone()),
+        env: Env::empty(),
+        pos: pos.clone(),
+    })
 }
 
 fn decode_set_arg(v: &Json, pos: &Position) -> R<SetExpr> {

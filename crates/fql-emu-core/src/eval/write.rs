@@ -44,6 +44,7 @@ pub fn register(r: &mut Registry) {
 }
 
 fn create_collection(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let key = if args.get("create_collection").is_some() { "create_collection" } else { "create_class" };
     let v = args.eval(ctx, env, key, pos)?;
     let params = cast::object(&v, &pos.key(key))?;
@@ -52,6 +53,7 @@ fn create_collection(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R
 }
 
 fn create_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let v = args.eval(ctx, env, "create_index", pos)?;
     let params = cast::object(&v, &pos.key("create_index"))?;
     let ts = ctx.ts;
@@ -59,6 +61,7 @@ fn create_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Valu
 }
 
 fn create_function(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let v = args.eval(ctx, env, "create_function", pos)?;
     let params = cast::object(&v, &pos.key("create_function"))?;
     let ts = ctx.ts;
@@ -66,6 +69,7 @@ fn create_function(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<V
 }
 
 fn create_role(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let v = args.eval(ctx, env, "create_role", pos)?;
     let params = cast::object(&v, &pos.key("create_role"))?;
     let ts = ctx.ts;
@@ -357,6 +361,7 @@ fn native_create_not_emulated(name: &str, pos: &Position) -> R<Value> {
 }
 
 fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let target = args.eval(ctx, env, "create", pos)?;
     let params = eval_params(ctx, env, args, pos)?;
     let cpos = pos.key("create");
@@ -428,6 +433,7 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 // ---- Update / Replace ----
 
 fn update_or_replace(partial: bool, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let verb = if partial { "update" } else { "replace" };
     let vp = pos.key(verb);
     let target = args.eval(ctx, env, verb, pos)?;
@@ -604,6 +610,7 @@ fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &P
 // ---- Delete ----
 
 fn delete(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+    ctx.wrote = true;
     let dp = pos.key("delete");
     let target = args.eval(ctx, env, "delete", pos)?;
     let r = cast::ref_(&target, &dp)?.clone();
@@ -656,7 +663,7 @@ mod tests {
 
     fn q(e: &mut Emulator, j: Json) -> Json {
         let r = e.query(&j);
-        assert_eq!(r.status, 200, "{}", r.body);
+        assert!(r.status == 200 || r.status == 201, "{}", r.body);
         r.body["resource"].clone()
     }
 

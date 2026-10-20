@@ -32,7 +32,7 @@ describe('error mapping', () => {
     expect(e).toBeInstanceOf(errors.NotFound)
     expect(e.message).toBe('instance not found')
     expect(e.description).toBe('Document not found.')
-    expect(errorsOf(e)[0].position).toEqual(['get'])
+    expect(errorsOf(e)[0].position).toEqual([])
     expect(e.requestResult.statusCode).toBe(404)
   })
 
@@ -48,7 +48,7 @@ describe('error mapping', () => {
     expect(e.message).toBe('call error')
     expect(e.description).toBe('Calling the function resulted in an error.')
     const [err] = errorsOf(e)
-    expect(err.cause).toEqual([{ code: 'transaction aborted', description: 'boom', position: [] }])
+    expect(err.cause).toEqual([{ code: 'transaction aborted', description: 'boom', position: ['expr'] }])
     // The pattern the app uses for unique violations inside UDFs.
     expect(errorsOf(e)[0].cause?.[0].code).toBe('transaction aborted')
   })

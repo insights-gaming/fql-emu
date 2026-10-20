@@ -34,11 +34,13 @@ pub struct Ctx<'a> {
     /// Transaction time: `Now()` and every `ts` written in this query.
     pub ts: Timestamp,
     pub depth: usize,
+    /// Set by write functions; a transaction with write effect answers 201.
+    pub wrote: bool,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(db: &'a mut Database, ts: Timestamp) -> Ctx<'a> {
-        Ctx { db, ts, depth: 0 }
+        Ctx { db, ts, depth: 0, wrote: false }
     }
 
     pub fn identity(&self) -> Option<&Ref> {
@@ -81,38 +83,43 @@ pub fn eval(ctx: &mut Ctx, env: &Env, expr: &Json, pos: &Position) -> R<Value> {
     }
 }
 
-/// Bind a lambda pattern against an argument value.
-fn bind_pattern(env: &Env, pat: &Pattern, arg: &Value, pos: &Position) -> R<Env> {
-    match pat {
-        Pattern::Ignore => Ok(env.clone()),
-        Pattern::Name(n) => Ok(env.bind(n, arg.clone())),
-        Pattern::Array(ps) => {
-            let items = match arg {
-                Value::Array(a) => a,
-                Value::Page { data, .. } => data,
-                other => return one(FaunaError::invalid_argument(&[Type::Array], other.rtype(), pos)),
-            };
-            if items.len() != ps.len() {
-                return one(FaunaError::invalid_lambda_arity(ps.len(), items.len(), pos));
+/// `EvalContext.genLambdaArgMap`: positional binding of a pattern against
+/// an argument. A non-array argument binds to a one-element array pattern;
+/// a Page does not bind as an array; arity errors are collected rather
+/// than short-circuited.
+fn bind_pattern(env: &mut Env, pat: &Pattern, arg: &Value, pos: &Position, errs: &mut crate::error::Errors) {
+    match (pat, arg) {
+        (Pattern::Ignore, _) => {}
+        (Pattern::Name(n), v) => *env = env.bind(n, v.clone()),
+        (Pattern::Array(ps), Value::Array(items)) => {
+            for (i, (p, v)) in ps.iter().zip(items).enumerate() {
+                bind_pattern(env, p, v, &pos.idx(i), errs);
             }
-            let mut e = env.clone();
-            for (p, v) in ps.iter().zip(items) {
-                e = bind_pattern(&e, p, v, pos)?;
+            if ps.len() != items.len() {
+                errs.push(FaunaError::invalid_lambda_arity(ps.len(), items.len(), pos));
             }
-            Ok(e)
         }
+        (Pattern::Array(ps), v) if ps.len() == 1 => bind_pattern(env, &ps[0], v, &pos.idx(0), errs),
+        (Pattern::Array(ps), _) => errs.push(FaunaError::invalid_lambda_arity(ps.len(), 1, pos)),
     }
 }
 
 /// Apply a lambda to a single argument value (`ec.evalLambdaApply`).
-/// Multi-parameter lambdas take an array.
+/// Multi-parameter lambdas take an array. Binding errors are reported at
+/// `lam.pos ++ ["lambda"]`, body errors under `lam.pos ++ ["expr"]`; `pos`
+/// (the call site) is only used for the stack-overflow error.
 pub fn apply_lambda(ctx: &mut Ctx, lam: &Lambda, arg: Value, pos: &Position) -> R<Value> {
     if ctx.depth >= MAX_STACK_DEPTH {
         return one(FaunaError::stack_overflow(pos));
     }
-    let env = bind_pattern(&lam.env, &lam.params, &arg, pos)?;
+    let mut env = lam.env.clone();
+    let mut errs = Vec::new();
+    bind_pattern(&mut env, &lam.params, &arg, &lam.pos.key("lambda"), &mut errs);
+    if !errs.is_empty() {
+        return Err(errs);
+    }
     ctx.depth += 1;
-    let r = eval(ctx, &env, &lam.body, pos);
+    let r = eval(ctx, &env, &lam.body, &lam.pos.key("expr"));
     ctx.depth -= 1;
     r
 }
@@ -148,7 +155,7 @@ pub fn parse_lambda_expr(env: &Env, expr: &Json, pos: &Position) -> R<Lambda> {
         }
     };
     let pattern = parse_pattern(params, &pos.key("lambda"))?;
-    Ok(Lambda { params: pattern, body: std::rc::Rc::new(body.clone()), env: env.clone() })
+    Ok(Lambda { params: pattern, body: std::rc::Rc::new(body.clone()), env: env.clone(), pos: pos.clone() })
 }
 
 fn parse_pattern(v: &Json, pos: &Position) -> R<Pattern> {

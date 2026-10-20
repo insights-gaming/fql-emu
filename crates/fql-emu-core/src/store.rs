@@ -451,8 +451,9 @@ impl Database {
         let def = CollectionDef {
             name: name.clone(),
             ts,
-            // Fauna defaults history_days to 30 when absent.
-            history_days: Some(history_days.unwrap_or(30)),
+            // `Document.DefaultRetainDays` is a server config value; the
+            // fauna/faunadb container (our oracle) reports 0.
+            history_days: Some(history_days.unwrap_or(0)),
             ttl_days,
             data: params.get("data").cloned(),
         };
@@ -640,7 +641,13 @@ impl Database {
             return one(FaunaError::native_already_exists("Function", pos));
         }
         let body = match params.get("body") {
-            Some(Value::Lambda(l)) => l.clone(),
+            Some(Value::Lambda(l)) => {
+                // A stored body is parsed at the root on the server, so errors
+                // inside it are positioned `["expr", ...]` when called.
+                let mut l = l.clone();
+                l.pos = Position::root();
+                l
+            }
             Some(other) => {
                 return one(FaunaError::validation_failed(
                     vec![ValidationFailure {

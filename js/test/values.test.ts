@@ -1,7 +1,7 @@
 // Every value type survives driver serialisation -> emulator -> driver parseJSON.
 import { describe, expect, it } from 'vitest'
 import { createEmulator } from '../src/index.js'
-import { q, rawValue, setRef, values } from './helpers.js'
+import { errors, q, rawValue, setRef, values } from './helpers.js'
 
 const emu = createEmulator()
 const usersRef = new values.Ref('users', values.Native.COLLECTIONS)
@@ -75,8 +75,9 @@ describe('value round-trip', () => {
     const out = await emu.query(q.Query(q.Lambda('x', q.Add(q.Var('x'), 1))))
     expect(out).toBeInstanceOf(values.Query)
     expect(out).toEqual(new values.Query({ lambda: 'x', expr: { add: [{ var: 'x' }, 1] }, api_version: '4' }))
-    // A lambda value returned from Let also renders as @query.
-    expect(await emu.query(q.Let({ f: q.Lambda('y', q.Var('y')) }, q.Var('f')))).toBeInstanceOf(values.Query)
+    // A bare lambda is not a form on the server: in a Let binding it is
+    // "No form/function found" (only Map/Filter/... parse inline lambdas).
+    await expect(emu.query(q.Let({ f: q.Lambda('y', q.Var('y')) }, q.Var('f')))).rejects.toBeInstanceOf(errors.BadRequest)
   })
 
   it('@obj-escaped objects', async () => {

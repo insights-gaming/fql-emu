@@ -23,6 +23,7 @@
 //! runs on a fork of the suite's seeded emulator, so cases are
 //! independent and order does not matter.
 //!
+//! A successful case may answer 200 or 201 (writes).
 //! `error` matches on `code` always, and on `description` / `position`
 //! only when given. `todo` cases are allowed to fail (and reported when
 //! they unexpectedly pass, so the marker can be removed).
@@ -58,7 +59,7 @@ fn run_suite(path: &PathBuf) -> Outcome {
     if let Some(Json::Array(setup)) = suite.get("setup") {
         for (i, q) in setup.iter().enumerate() {
             let r = base.query(q);
-            assert_eq!(r.status, 200, "{}: setup[{}] failed: {}", file, i, r.body);
+            assert!(r.status == 200 || r.status == 201, "{}: setup[{}] failed: {}", file, i, r.body);
         }
     }
 
@@ -72,7 +73,7 @@ fn run_suite(path: &PathBuf) -> Outcome {
         let resp = emu.query(case.get("query").unwrap_or(&Json::Null));
 
         let result: Result<(), String> = if let Some(expect) = case.get("expect") {
-            if resp.status != 200 {
+            if resp.status >= 400 {
                 Err(format!("expected {}, got error {}", expect, resp.body))
             } else if &resp.body["resource"] != expect {
                 Err(format!("expected {}, got {}", expect, resp.body["resource"]))
@@ -80,7 +81,7 @@ fn run_suite(path: &PathBuf) -> Outcome {
                 Ok(())
             }
         } else if let Some(err) = case.get("error") {
-            if resp.status == 200 {
+            if resp.status < 400 {
                 Err(format!("expected error {}, got {}", err, resp.body["resource"]))
             } else {
                 let got = &resp.body["errors"][0];

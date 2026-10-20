@@ -77,7 +77,7 @@ describe('basic forms', () => {
     expect(created).toEqual({
       ref: new values.Ref('users', values.Native.COLLECTIONS),
       ts: 1_704_067_200_000_000,
-      history_days: 30,
+      history_days: 0,
       name: 'users',
     })
     expect(await emu.query(q.Get(q.Collection('users')))).toEqual(created)

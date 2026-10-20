@@ -9,7 +9,7 @@
 
 use super::cast::{self, PathElem};
 use super::forms::{Args, Registry};
-use super::{apply_lambda, call_function, eval, eval_lambda_arg, json_type, parse_lambda_expr, Ctx, Env};
+use super::{apply_lambda, call_function, eval, eval_lambda_arg, json_type, Ctx, Env};
 use crate::error::{one, FaunaError, Position, R};
 use crate::value::{Object, Ref, Type, Value};
 use serde_json::Value as Json;
@@ -18,7 +18,9 @@ pub fn register(r: &mut Registry) {
     r.stub("at", &["at", "expr"], &[]);
     r.add("var", &["var"], &[], var);
     r.add("let", &["let", "in"], &[], let_);
-    r.add("lambda", &["lambda", "expr"], &[], lambda);
+    // NB: `{"lambda", "expr"}` is deliberately *not* a form. The server only
+    // parses it as the argument of specific functions (`QueryParser.lambdas`);
+    // at the top level or in a `Let` it is "No form/function found".
     r.add("if", &["if", "then", "else"], &[], if_);
     r.add("do", &["do"], &[], do_);
     r.add("object", &["object"], &[], object);
@@ -130,11 +132,6 @@ fn let_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         other => return one(FaunaError::invalid_expr_type(&[Type::Array], json_type(other), &let_pos)),
     }
     eval(ctx, &env, args.req("in"), &pos.key("in"))
-}
-
-fn lambda(_ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
-    let o = args.obj;
-    parse_lambda_expr(env, &Json::Object(o.clone()), pos).map(Value::Lambda)
 }
 
 fn if_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {

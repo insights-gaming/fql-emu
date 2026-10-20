@@ -227,11 +227,17 @@ impl Pattern {
 
 /// A lambda closure. `body` is the raw expression JSON, evaluated in `env`
 /// extended with the parameter bindings.
+///
+/// `pos` is where the lambda was parsed: the server reports arity errors
+/// at `pos ++ ["lambda"]` and errors inside the body under
+/// `pos ++ ["expr"]` (`EvalContext.evalLambdaApply`). Stored UDF bodies
+/// are parsed at the root, so their body errors are at `["expr", ...]`.
 #[derive(Clone)]
 pub struct Lambda {
     pub params: Pattern,
     pub body: Rc<serde_json::Value>,
     pub env: Env,
+    pub pos: crate::error::Position,
 }
 
 impl PartialEq for Lambda {

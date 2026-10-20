@@ -23,10 +23,10 @@
 
 use super::cast;
 use super::forms::{with_registry, Args, Registry};
-use super::{eval, json_type, parse_lambda_expr, Ctx, Env, MAX_STACK_DEPTH};
-use crate::error::{one, Errors, FaunaError, Position, R};
+use super::{apply_lambda, json_type, parse_lambda_expr, Ctx, Env};
+use crate::error::{one, FaunaError, Position, R};
 use crate::ordering;
-use crate::value::{Lambda, Pattern, SetExpr, Type, Value};
+use crate::value::{Lambda, SetExpr, Type, Value};
 use serde_json::Value as Json;
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -71,44 +71,6 @@ fn inline_lambda(env: &Env, expr: &Json, pos: &Position) -> R<Lambda> {
         }
         other => one(FaunaError::invalid_expr_type(&[Type::Lambda], json_type(other), pos)),
     }
-}
-
-/// `EvalContext.genLambdaArgMap`: positional binding. A non-array
-/// argument binds to a one-element pattern; arity errors are collected.
-fn bind(env: &mut Env, pat: &Pattern, arg: &Value, pos: &Position, errs: &mut Errors) {
-    match (pat, arg) {
-        (Pattern::Ignore, _) => {}
-        (Pattern::Name(n), v) => *env = env.bind(n, v.clone()),
-        (Pattern::Array(ps), Value::Array(items)) => {
-            for (i, (p, v)) in ps.iter().zip(items).enumerate() {
-                bind(env, p, v, &pos.idx(i), errs);
-            }
-            if ps.len() != items.len() {
-                errs.push(FaunaError::invalid_lambda_arity(ps.len(), items.len(), pos));
-            }
-        }
-        (Pattern::Array(ps), v) if ps.len() == 1 => bind(env, &ps[0], v, &pos.idx(0), errs),
-        (Pattern::Array(ps), _) => errs.push(FaunaError::invalid_lambda_arity(ps.len(), 1, pos)),
-    }
-}
-
-/// `EvalContext.evalLambdaApply(lambda, arg, pos at fn)` for an inline
-/// lambda parsed at `fn_pos`: bindings at `fn_pos ++ ["lambda"]`, body at
-/// `fn_pos ++ ["expr"]`.
-fn apply(ctx: &mut Ctx, lam: &Lambda, arg: &Value, fn_pos: &Position) -> R<Value> {
-    if ctx.depth >= MAX_STACK_DEPTH {
-        return one(FaunaError::stack_overflow(fn_pos));
-    }
-    let mut env = lam.env.clone();
-    let mut errs = Vec::new();
-    bind(&mut env, &lam.params, arg, &fn_pos.key("lambda"), &mut errs);
-    if !errs.is_empty() {
-        return Err(errs);
-    }
-    ctx.depth += 1;
-    let r = eval(ctx, &env, &lam.body, &fn_pos.key("expr"));
-    ctx.depth -= 1;
-    r
 }
 
 // ---- casts ----
@@ -188,7 +150,7 @@ fn map(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 fn map_values(ctx: &mut Ctx, lam: &Lambda, items: &[Value], lp: &Position) -> R<Vec<Value>> {
     let mut out = Vec::with_capacity(items.len());
     for it in items {
-        out.push(apply(ctx, lam, it, lp)?);
+        out.push(apply_lambda(ctx, lam, it.clone(), lp)?);
     }
     Ok(out)
 }
@@ -217,7 +179,7 @@ fn foreach(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 fn filter_values(ctx: &mut Ctx, lam: &Lambda, items: Vec<Value>, lp: &Position, pos: &Position) -> R<Vec<Value>> {
     let mut keep = Vec::with_capacity(items.len());
     for it in &items {
-        keep.push(apply(ctx, lam, it, lp)?);
+        keep.push(apply_lambda(ctx, lam, it.clone(), lp)?);
     }
     let mut errs = Vec::new();
     let mut out = Vec::new();
@@ -300,7 +262,7 @@ fn reduce(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let step = |ctx: &mut Ctx, items: Vec<Value>| -> R<Value> {
         let mut acc = initial.clone();
         for it in items {
-            acc = apply(ctx, &lam, &Value::Array(vec![acc, it]), &lp)?;
+            acc = apply_lambda(ctx, &lam, Value::Array(vec![acc, it]), &lp)?;
         }
         Ok(acc)
     };

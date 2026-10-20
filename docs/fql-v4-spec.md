@@ -33,7 +33,7 @@ Responses:
 
 | Outcome | Status | Body |
 |---|---|---|
-| success | 200 | `{"resource": <value>}` |
+| success | 200 (201 when the transaction wrote) | `{"resource": <value>}` |
 | failure | 400 / 403 / 404 | `{"errors": [<error>, ...]}` |
 
 The status is derived from the *worst* error in the list: parse errors rank
@@ -260,7 +260,8 @@ tests: [`WriteFunctionsSpec.scala`](https://github.com/fauna/faunadb/blob/4f8f8b
   `{ref, ts, history_days, name, data?, ttl_days?}`; indexes return
   `{ref, ts, active, serialized, name, source, terms?, values?, unique?, partitions, data?}`;
   functions `{ref, ts, name, body, role?, data?}`. `history_days` defaults to
-  30; `partitions` is 1 for unique or term-less indexes, else 8.
+  a server config value (`Document.DefaultRetainDays`; the `fauna/faunadb`
+  container reports 0); `partitions` is 1 for unique or term-less indexes, else 8.
 - Reserved names (`events`, `sets`, `self`, `documents`, `_`, and the native
   collection names) fail validation.
 - `NewId()` returns a string of a 64-bit snowflake id. `Now()` /
