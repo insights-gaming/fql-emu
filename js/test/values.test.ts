@@ -55,10 +55,13 @@ describe('value round-trip', () => {
   })
 
   it('SetRef', async () => {
-    const set = setRef({ match: new values.Ref('by_x', values.Native.INDEXES), terms: ['a'] })
+    const set = setRef({ match: new values.Ref('by_x', values.Native.INDEXES), terms: 'a' })
     const out = await emu.query(set)
     expect(out).toBeInstanceOf(values.SetRef)
     expect(out).toEqual(set)
+    // The server renders a single term as a scalar (writeIndexValues).
+    const arrayTerms = setRef({ match: new values.Ref('by_x', values.Native.INDEXES), terms: ['a'] })
+    expect(await emu.query(arrayTerms)).toEqual(set)
     const docs = setRef({ documents: usersRef })
     expect(await emu.query(docs)).toEqual(docs)
   })
@@ -94,7 +97,7 @@ describe('value round-trip', () => {
       list: [new values.Ref('1', usersRef), new values.FaunaDate('2024-01-01')],
     })
     expect(out).toEqual({
-      when: new values.FaunaTime('2024-01-01T00:00:00.000000000Z'),
+      when: new values.FaunaTime('2024-01-01T00:00:00Z'),
       list: [new values.Ref('1', usersRef), new values.FaunaDate('2024-01-01')],
     })
   })

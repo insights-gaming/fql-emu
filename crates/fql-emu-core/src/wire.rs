@@ -292,9 +292,13 @@ pub fn encode_lambda(l: &Lambda) -> Json {
 
 fn encode_set_body(s: &SetExpr) -> Json {
     match s {
-        SetExpr::Match { index, terms } => {
-            json!({ "match": encode_ref(index), "terms": Json::Array(terms.iter().map(encode).collect()) })
-        }
+        // `writeSetRef`/`writeIndexValues`: `terms` is omitted when empty and
+        // a single term is written as a scalar, not a one-element array.
+        SetExpr::Match { index, terms } => match terms.as_slice() {
+            [] => json!({ "match": encode_ref(index) }),
+            [t] => json!({ "match": encode_ref(index), "terms": encode(t) }),
+            ts => json!({ "match": encode_ref(index), "terms": Json::Array(ts.iter().map(encode).collect()) }),
+        },
         SetExpr::Documents(r) => json!({ "documents": encode_ref(r) }),
         SetExpr::Singleton(r) => json!({ "singleton": encode_ref(r) }),
         SetExpr::Events(v) => json!({ "events": encode(v) }),

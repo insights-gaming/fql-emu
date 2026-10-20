@@ -286,7 +286,7 @@ mod tests {
     fn now_is_fixed_within_a_transaction_and_controllable() {
         let mut e = Emulator::new();
         e.set_now_micros(1_000_000);
-        assert_eq!(q(&mut e, json!({"now": null})), json!({"@ts": "1970-01-01T00:00:01.000000000Z"}));
+        assert_eq!(q(&mut e, json!({"now": null})), json!({"@ts": "1970-01-01T00:00:01Z"}));
         assert_eq!(q(&mut e, json!({"to_micros": {"time": "now"}})), json!(1_000_000));
     }
 

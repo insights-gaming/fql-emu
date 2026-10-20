@@ -44,13 +44,27 @@ impl Timestamp {
         self.secs as i128 * 1_000_000_000 + self.nanos as i128
     }
 
-    /// RFC 3339 with nanosecond precision, always in UTC, e.g.
-    /// `1970-01-01T00:00:00.000000001Z`. This is the `@ts` wire form.
+    /// The `@ts` wire form: what `java.time.Instant.toString` prints
+    /// (`Timestamp.toString` on the server). UTC, and the fraction is
+    /// omitted when zero, else printed with 3, 6 or 9 digits as needed:
+    /// `1970-01-01T00:00:00Z`, `...00.001Z`, `...00.000001Z`,
+    /// `...00.000000001Z`.
     pub fn to_rfc3339(&self) -> String {
         use chrono::{DateTime, Utc};
         let dt: DateTime<Utc> = DateTime::from_timestamp(self.secs, self.nanos)
             .unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
-        dt.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
+        let base = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let n = self.nanos;
+        let frac = if n == 0 {
+            String::new()
+        } else if n % 1_000_000 == 0 {
+            format!(".{:03}", n / 1_000_000)
+        } else if n % 1_000 == 0 {
+            format!(".{:06}", n / 1_000)
+        } else {
+            format!(".{:09}", n)
+        };
+        format!("{}{}Z", base, frac)
     }
 
     /// Parse an ISO-8601 instant. Accepts what `java.time.Instant.parse`

@@ -486,6 +486,13 @@ impl Database {
                 other => return one(fail(format!("Invalid type {}, expected type Map.", ir_type_name(other)))),
             };
             let reverse = matches!(o.get("reverse"), Some(Value::Bool(true)));
+            if let Some(t) = o.get("transform") {
+                // `casefold` etc. transforms (Index.scala `TermConfig.transform`)
+                // are not implemented; fail at definition time rather than
+                // silently indexing untransformed values.
+                let name = t.as_str().unwrap_or("?").to_string();
+                return one(FaunaError::not_emulated(&format!("index term/value transforms (`transform: {}`)", name), pos));
+            }
             let path = if let Some(Value::String(b)) = o.get("binding") {
                 TermPath::Binding(b.clone())
             } else {

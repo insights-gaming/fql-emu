@@ -263,14 +263,15 @@ fn do_select(container: &Value, path: &[PathElem], all: bool, default: Option<Va
             return do_select(&Value::Array(data.clone()), rest, all, default, pos);
         }
     }
-    let found = value_at_path(container, path).cloned();
     if !all {
-        match found.or(default) {
+        match value_at_path(container, path).cloned().or(default) {
             Some(v) => Ok(v),
             None => one(FaunaError::value_not_found(path, pos)),
         }
     } else {
-        Ok(match found {
+        // `valueAtPath0(all = true)`: arrays along the path are traversed
+        // and the matches concatenated (the index `select_as_index` rule).
+        Ok(match super::sets::select_all(container, path) {
             Some(Value::Array(a)) => Value::Array(a),
             Some(v) => Value::Array(vec![v]),
             None => Value::Array(vec![]),

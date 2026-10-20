@@ -64,7 +64,7 @@ describe('clock', () => {
     emu.setNow(new Date('2024-01-01T00:00:00Z'))
     const client = emu.client()
     expect(client.getLastTxnTime()).toBeNull()
-    expect(await client.query(q.Now())).toEqual(new values.FaunaTime('2024-01-01T00:00:00.000000000Z'))
+    expect(await client.query(q.Now())).toEqual(new values.FaunaTime('2024-01-01T00:00:00Z'))
     expect(client.getLastTxnTime()).toBe(JAN_1_2024)
     expect(await client.query(q.ToMicros(q.Now()))).toBe(JAN_1_2024)
     expect(client.getLastTxnTime()).toBe(JAN_1_2024)
@@ -72,7 +72,7 @@ describe('clock', () => {
 
   it('accepts microseconds and the constructor option', async () => {
     expect(await createEmulator({ now: 1_000_000 }).query(q.Now())).toEqual(
-      new values.FaunaTime('1970-01-01T00:00:01.000000000Z'),
+      new values.FaunaTime('1970-01-01T00:00:01Z'),
     )
     const emu = createEmulator()
     emu.setNow(JAN_1_2024 + 1)

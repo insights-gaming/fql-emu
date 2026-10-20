@@ -59,7 +59,10 @@ A set value is an unevaluated `SetExpr`. Materialising it:
   (`Index.scala: TermConfig`), expand array fields one entry per element
   (cartesian across fields), keep entries whose terms equal the match terms,
   sort by `(values..., ref)` using `ordering::compare` (with `reverse`
-  flags), and yield `ref` (no values) or `[values..., ref]`.
+  flags), and yield the document ref when the index has no `values`, the
+  bare value when it has one, or an array of the values when it has
+  several. The ref is only part of the sort key and the cursor
+  (`Entry.key`), never appended to the yielded value.
 - `Union`/`Intersection`/`Difference`/`Distinct` are set operations on the
   sorted entry lists keyed by the full entry key.
 - `Range` filters on the entry key, `Reverse` reverses, `Filter`/`Join` map

@@ -61,10 +61,10 @@ describe('basic forms', () => {
   })
 
   it('Now and Time', async () => {
-    expect(await emu.query(q.Now())).toEqual(new values.FaunaTime('2024-01-01T00:00:00.000000000Z'))
-    expect(await emu.query(q.Time('now'))).toEqual(new values.FaunaTime('2024-01-01T00:00:00.000000000Z'))
+    expect(await emu.query(q.Now())).toEqual(new values.FaunaTime('2024-01-01T00:00:00Z'))
+    expect(await emu.query(q.Time('now'))).toEqual(new values.FaunaTime('2024-01-01T00:00:00Z'))
     expect(await emu.query(q.Time('2020-01-01T10:00:00.5Z'))).toEqual(
-      new values.FaunaTime('2020-01-01T10:00:00.500000000Z'),
+      new values.FaunaTime('2020-01-01T10:00:00.500Z'),
     )
     expect(await emu.query(q.ToMicros(q.Now()))).toBe(1_704_067_200_000_000)
   })

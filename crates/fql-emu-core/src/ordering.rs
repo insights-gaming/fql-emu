@@ -85,10 +85,11 @@ fn compare_numbers(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-/// Refs sort by their encoded DocID on the server. The emulator uses the
-/// (collection path, id) pair with numeric ids compared numerically; this
-/// matches the server for ids minted by `NewId` within one collection,
-/// which is the case that matters for tie-breaking index entries.
+/// Refs sort by their `DocID` on the server: the numeric document id
+/// first, then the collection id
+/// (ext/atoms/src/main/scala/DocID.scala `compare`). Collection ids are
+/// internal longs we do not have, so the emulator tie-breaks on the
+/// collection path; named (schema) refs compare by name.
 pub fn compare_refs(a: &Ref, b: &Ref) -> Ordering {
     let path = |r: &Ref| -> Vec<String> {
         let mut out = Vec::new();
@@ -103,13 +104,13 @@ pub fn compare_refs(a: &Ref, b: &Ref) -> Ordering {
     let pa = path(a);
     let pb = path(b);
     let (ia, ib) = (pa.len() - 1, pb.len() - 1);
-    match pa[..ia].cmp(&pb[..ib]) {
-        Ordering::Equal => match (pa[ia].parse::<u64>(), pb[ib].parse::<u64>()) {
-            (Ok(x), Ok(y)) => x.cmp(&y),
-            _ => pa[ia].cmp(&pb[ib]),
-        },
-        o => o,
-    }
+    let by_id = match (pa[ia].parse::<u64>(), pb[ib].parse::<u64>()) {
+        (Ok(x), Ok(y)) => x.cmp(&y),
+        (Ok(_), Err(_)) => Ordering::Less,
+        (Err(_), Ok(_)) => Ordering::Greater,
+        _ => pa[ia].cmp(&pb[ib]),
+    };
+    by_id.then_with(|| pa[..ia].cmp(&pb[..ib]))
 }
 
 fn compare_arrays(a: &[Value], b: &[Value]) -> Ordering {

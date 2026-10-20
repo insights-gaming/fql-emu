@@ -53,7 +53,7 @@
     { "name": "get missing document", "query": { "get": { "ref": { "collection": "users" }, "id": "1" } }, "error": { "code": "instance not found", "description": "Document not found.", "position": [], "status": 404 } },
     { "name": "get document in missing collection", "query": { "get": { "ref": { "collection": "nope" }, "id": "1" } }, "error": { "code": "invalid ref", "description": "Ref refers to undefined collection 'nope'", "position": ["get"] } },
     { "name": "exists false", "query": { "exists": { "ref": { "collection": "users" }, "id": "1" } }, "expect": false },
-    { "name": "now is pinned", "query": { "now": null }, "expect": { "@ts": "2020-09-13T12:26:40.000000000Z" } },
+    { "name": "now is pinned", "query": { "now": null }, "expect": { "@ts": "2020-09-13T12:26:40Z" } },
     { "name": "is_string", "query": { "is_string": "x" }, "expect": true },
     { "name": "is_collection", "query": { "is_collection": { "collection": "users" } }, "expect": true },
     { "name": "and short circuits", "query": { "and": [false, { "abort": "never" }] }, "expect": false },

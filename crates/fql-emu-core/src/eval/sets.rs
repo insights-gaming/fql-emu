@@ -896,7 +896,7 @@ fn flatten_into(items: Vec<Value>, out: &mut Vec<Value>) {
 
 /// `ReadAdaptor.valueAtPath0` with `all = true`: arrays met along the
 /// path (or at its end) are traversed and their results concatenated.
-fn select_all(v: &Value, path: &[PathElem]) -> Option<Value> {
+pub fn select_all(v: &Value, path: &[PathElem]) -> Option<Value> {
     match v {
         Value::Ref(r) => match path {
             [] => Some(v.clone()),
