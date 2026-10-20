@@ -12,7 +12,7 @@ pub struct FqlEmulator {
 }
 
 fn response_json(r: Response) -> String {
-    serde_json::json!({ "status": r.status, "body": r.body }).to_string()
+    serde_json::json!({ "status": r.status, "body": r.body, "txn_time_micros": r.txn_time_micros }).to_string()
 }
 
 #[wasm_bindgen]
@@ -23,8 +23,9 @@ impl FqlEmulator {
     }
 
     /// Run one query. `expr_json` is the serialised query expression.
-    /// Returns `{"status": 200, "body": {"resource": ...}}` or
-    /// `{"status": 4xx, "body": {"errors": [...]}}`.
+    /// Returns `{"status": 200, "body": {"resource": ...}, "txn_time_micros": n}`
+    /// or `{"status": 4xx, "body": {"errors": [...]}, "txn_time_micros": n}`
+    /// (`txn_time_micros` is `null` when the body was not valid JSON).
     pub fn query(&mut self, expr_json: &str) -> String {
         response_json(self.inner.query_str(expr_json))
     }
@@ -54,8 +55,9 @@ impl FqlEmulator {
         self.inner.set_auto_clock_from_micros(micros as i64);
     }
 
-    pub fn set_next_id(&mut self, id: f64) {
-        self.inner.set_next_id(id as u64);
+    /// `id` is a JS `BigInt`: Fauna ids (~3e17) do not fit in an f64.
+    pub fn set_next_id(&mut self, id: u64) {
+        self.inner.set_next_id(id);
     }
 
     /// `identity_json` is a `{"@ref": ...}` value, or `null`.
