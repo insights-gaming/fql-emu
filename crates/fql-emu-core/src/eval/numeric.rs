@@ -18,13 +18,9 @@ pub fn register(r: &mut Registry) {
     r.add("multiply", &["multiply"], &[], |c, e, a, p| fold("multiply", "multiply", c, e, a, p));
     r.add("divide", &["divide"], &[], |c, e, a, p| fold("divide", "divide", c, e, a, p));
     r.add("modulo", &["modulo"], &[], |c, e, a, p| fold("modulo", "modulo", c, e, a, p));
-    r.add("bit_and", &["bit_and"], &[], |c, e, a, p| fold("bit_and", "bit_and", c, e, a, p));
     r.add("bitand", &["bitand"], &[], |c, e, a, p| fold("bitand", "bit_and", c, e, a, p));
-    r.add("bit_or", &["bit_or"], &[], |c, e, a, p| fold("bit_or", "bit_or", c, e, a, p));
     r.add("bitor", &["bitor"], &[], |c, e, a, p| fold("bitor", "bit_or", c, e, a, p));
-    r.add("bit_xor", &["bit_xor"], &[], |c, e, a, p| fold("bit_xor", "bit_xor", c, e, a, p));
     r.add("bitxor", &["bitxor"], &[], |c, e, a, p| fold("bitxor", "bit_xor", c, e, a, p));
-    r.add("bit_not", &["bit_not"], &[], |c, e, a, p| unary("bit_not", "bit_not", c, e, a, p));
     r.add("bitnot", &["bitnot"], &[], |c, e, a, p| unary("bitnot", "bit_not", c, e, a, p));
     r.add("abs", &["abs"], &[], |c, e, a, p| unary("abs", "abs", c, e, a, p));
     r.add("ceil", &["ceil"], &[], |c, e, a, p| unary("ceil", "ceil", c, e, a, p));

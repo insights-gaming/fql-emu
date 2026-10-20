@@ -19,58 +19,39 @@ use jformat::{FmtErr, Spec, Tm};
 use jregex::JRegex;
 
 pub fn register(r: &mut Registry) {
+    // Only the legacy un-underscored spellings exist in API v4; the
+    // snake_case variants (`starts_with`, `lower_case`, `split_str`, ...) are
+    // `introducedOn(APIVersion.Unstable)` in Parser.scala and the v4 server
+    // answers "No form/function found" for them.
     r.add("concat", &["concat"], &["separator"], concat);
     r.add("casefold", &["casefold"], &["normalizer"], casefold);
-    r.add("regex_escape", &["regex_escape"], &[], |c, e, a, p| regex_escape("regex_escape", c, e, a, p));
     r.add("regexescape", &["regexescape"], &[], |c, e, a, p| regex_escape("regexescape", c, e, a, p));
-    r.add("starts_with", &["starts_with", "search"], &[], |c, e, a, p| str_pred("starts_with", c, e, a, p));
     r.add("startswith", &["startswith", "search"], &[], |c, e, a, p| str_pred("startswith", c, e, a, p));
-    r.add("ends_with", &["ends_with", "search"], &[], |c, e, a, p| str_pred("ends_with", c, e, a, p));
     r.add("endswith", &["endswith", "search"], &[], |c, e, a, p| str_pred("endswith", c, e, a, p));
-    r.add("contains_str", &["contains_str", "search"], &[], |c, e, a, p| str_pred("contains_str", c, e, a, p));
     r.add("containsstr", &["containsstr", "search"], &[], |c, e, a, p| str_pred("containsstr", c, e, a, p));
-    r.add("contains_str_regex", &["contains_str_regex", "pattern"], &[], |c, e, a, p| {
-        contains_str_regex("contains_str_regex", c, e, a, p)
-    });
     r.add("containsstrregex", &["containsstrregex", "pattern"], &[], |c, e, a, p| {
         contains_str_regex("containsstrregex", c, e, a, p)
     });
-    r.add("find_str", &["find_str", "find"], &["start"], |c, e, a, p| find_str("find_str", c, e, a, p));
     r.add("findstr", &["findstr", "find"], &["start"], |c, e, a, p| find_str("findstr", c, e, a, p));
-    r.add("find_str_regex", &["find_str_regex", "pattern"], &["start", "num_results"], |c, e, a, p| {
-        find_str_regex("find_str_regex", c, e, a, p)
-    });
     r.add("findstrregex", &["findstrregex", "pattern"], &["start", "num_results"], |c, e, a, p| {
         find_str_regex("findstrregex", c, e, a, p)
     });
     r.add("length", &["length"], &[], |c, e, a, p| unary("length", c, e, a, p));
-    r.add("lower_case", &["lower_case"], &[], |c, e, a, p| unary("lower_case", c, e, a, p));
     r.add("lowercase", &["lowercase"], &[], |c, e, a, p| unary("lowercase", c, e, a, p));
-    r.add("l_trim", &["l_trim"], &[], |c, e, a, p| unary("l_trim", c, e, a, p));
     r.add("ltrim", &["ltrim"], &[], |c, e, a, p| unary("ltrim", c, e, a, p));
     r.add("ngram", &["ngram"], &["min", "max"], ngram);
     r.add("repeat", &["repeat"], &["number"], repeat);
-    r.add("replace_str", &["replace_str", "find", "replace"], &[], |c, e, a, p| replace_str("replace_str", c, e, a, p));
     r.add("replacestr", &["replacestr", "find", "replace"], &[], |c, e, a, p| replace_str("replacestr", c, e, a, p));
-    r.add("replace_str_regex", &["replace_str_regex", "pattern", "replace"], &["first"], |c, e, a, p| {
-        replace_str_regex("replace_str_regex", c, e, a, p)
-    });
     r.add("replacestrregex", &["replacestrregex", "pattern", "replace"], &["first"], |c, e, a, p| {
         replace_str_regex("replacestrregex", c, e, a, p)
     });
-    r.add("r_trim", &["r_trim"], &[], |c, e, a, p| unary("r_trim", c, e, a, p));
     r.add("rtrim", &["rtrim"], &[], |c, e, a, p| unary("rtrim", c, e, a, p));
     r.add("space", &["space"], &[], space);
-    r.add("sub_string", &["sub_string"], &["start", "length"], |c, e, a, p| sub_string("sub_string", c, e, a, p));
     r.add("substring", &["substring"], &["start", "length"], |c, e, a, p| sub_string("substring", c, e, a, p));
-    r.add("title_case", &["title_case"], &[], |c, e, a, p| unary("title_case", c, e, a, p));
     r.add("titlecase", &["titlecase"], &[], |c, e, a, p| unary("titlecase", c, e, a, p));
     r.add("trim", &["trim"], &[], |c, e, a, p| unary("trim", c, e, a, p));
-    r.add("upper_case", &["upper_case"], &[], |c, e, a, p| unary("upper_case", c, e, a, p));
     r.add("uppercase", &["uppercase"], &[], |c, e, a, p| unary("uppercase", c, e, a, p));
     r.add("format", &["format", "values"], &[], format);
-    r.add("split_str", &["split_str", "token"], &["count"], split_str);
-    r.add("split_str_regex", &["split_str_regex", "pattern"], &["count"], split_str_regex);
 }
 
 // ---- argument helpers ----
@@ -650,40 +631,8 @@ fn sub_string(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) 
     let (a, b) = (cp_offset(&value, spos).unwrap(), cp_offset(&value, epos).unwrap());
     Ok(Value::String(value[a..b].to_string()))
 }
+// NB: `SplitStr`/`SplitStrRegex` do not exist in API v4 (Unstable only).
 
-fn split_count(count: Option<i64>, pos: &Position) -> R<i32> {
-    match count {
-        Some(l) if l <= 0 => one(FaunaError::bounds("count", "count > 0", &pos.key("count"))),
-        Some(l) if l > 1024 => one(FaunaError::bounds("count", "count <= 1024", &pos.key("count"))),
-        Some(l) => Ok(l as i32),
-        None => Ok(-1),
-    }
-}
-
-fn split_with(re: &JRegex, value: &str, count: Option<i64>, pos: &Position, pattern_pos: &Position) -> R<Value> {
-    let limit = split_count(count, pos)?;
-    check_subject(re, value, pattern_pos)?;
-    Ok(Value::Array(re.split(value, limit).into_iter().map(Value::String).collect()))
-}
-
-fn split_str(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
-    let (value, token, count) = join3(
-        str_arg(ctx, env, args, "split_str", pos),
-        str_arg(ctx, env, args, "token", pos),
-        opt_long(ctx, env, args, "count", pos),
-    )?;
-    let re = compile_regex(&jregex::quote(&token), &pos.key("token"))?;
-    split_with(&re, &value, count, pos, &pos.key("token"))
-}
-
-fn split_str_regex(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
-    let (value, re, count) = join3(
-        str_arg(ctx, env, args, "split_str_regex", pos),
-        regex_arg(ctx, env, args, "pattern", pos),
-        opt_long(ctx, env, args, "count", pos),
-    )?;
-    split_with(&re, &value, count, pos, &pos.key("pattern"))
-}
 
 // ---- Format ----
 

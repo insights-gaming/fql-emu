@@ -395,20 +395,9 @@ impl Database {
     fn require_name(params: &Object, pos: &Position) -> R<String> {
         match params.get("name") {
             Some(Value::String(s)) if !s.is_empty() => {
-                if RESERVED_NAMES.contains(&s.as_str()) {
-                    return one(FaunaError::validation_failed(
-                        vec![ValidationFailure {
-                            field: vec!["name".into()],
-                            code: "reserved name".into(),
-                            description: format!(
-                                "Invalid name {}. Reserved names: {}.",
-                                s,
-                                RESERVED_NAMES.join(", ")
-                            ),
-                        }],
-                        pos,
-                    ));
-                }
+                // NB: no reserved-name check. `RESERVED_NAMES` are the names the
+                // *ref parser* treats specially; the v4 server accepts them as
+                // collection names (verified against fauna/faunadb).
                 Ok(s.clone())
             }
             Some(Value::String(_)) | None => one(FaunaError::validation_failed(
@@ -423,7 +412,7 @@ impl Database {
                 vec![ValidationFailure {
                     field: vec!["name".into()],
                     code: "invalid type".into(),
-                    description: format!("Invalid type {}, expected type String.", ir_type_name(other)),
+                    description: format!("Invalid type {}, expected type Name.", ir_type_name(other)),
                 }],
                 pos,
             )),

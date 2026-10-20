@@ -396,8 +396,11 @@ Spec and tests:
 - **Strings** follow the JVM: `Format` is `String.format`, regex functions
   are `java.util.regex`, `Casefold` uses `java.text.Normalizer` (+ ICU case
   fold) with normalizers `NFKCCaseFold` (default), `NFC`, `NFD`, `NFKC`,
-  `NFKD`. v4 names are snake_case (`lower_case`, `find_str_regex`); the
-  older un-underscored spellings are still accepted. Invalid regex →
+  `NFKD`. **Only the un-underscored spellings exist in v4** (`lowercase`,
+  `findstrregex`, `startswith`, `substring`, `bitand`, ...); the snake_case
+  variants (`lower_case`, `starts_with`, `split_str`, `bit_and`, ...) are
+  `introducedOn(APIVersion.Unstable)` in Parser.scala and the v4 server
+  rejects them with "No form/function found". There is no `SplitStr` in v4. Invalid regex →
   `invalid argument: Search pattern /x/ is not a valid regular expression.`
 - **Time**: `Time("now")` = transaction time; `Time(iso)` parses any
   ISO-8601 instant (`Cannot cast 'x' to a time.` otherwise); `Date("YYYY-MM-DD")`;
