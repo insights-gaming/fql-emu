@@ -13,12 +13,13 @@ use super::cast;
 use super::forms::{Args, Registry};
 use super::{Ctx, Env};
 use crate::error::{one, FaunaError, Position, R};
+use crate::Backend;
 use crate::value::{Type, Value};
 use icu_locid::LanguageIdentifier;
 use jformat::{FmtErr, Spec, Tm};
 use jregex::JRegex;
 
-pub fn register(r: &mut Registry) {
+pub fn register<B: Backend>(r: &mut Registry<B>) {
     // Only the legacy un-underscored spellings exist in API v4; the
     // snake_case variants (`starts_with`, `lower_case`, `split_str`, ...) are
     // `introducedOn(APIVersion.Unstable)` in Parser.scala and the v4 server
@@ -83,12 +84,12 @@ pub(crate) fn join4<A, B, C, D>(a: R<A>, b: R<B>, c: R<C>, d: R<D>) -> R<(A, B, 
     }
 }
 
-fn str_arg(ctx: &mut Ctx, env: &Env, args: &Args, key: &str, pos: &Position) -> R<String> {
+fn str_arg<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, key: &str, pos: &Position) -> R<String> {
     let v = args.eval(ctx, env, key, pos)?;
     cast::string(&v, &pos.key(key)).map(str::to_owned)
 }
 
-fn opt_long(ctx: &mut Ctx, env: &Env, args: &Args, key: &str, pos: &Position) -> R<Option<i64>> {
+fn opt_long<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, key: &str, pos: &Position) -> R<Option<i64>> {
     match args.eval_opt(ctx, env, key, pos)? {
         Some(v) => cast::long(&v, &pos.key(key)).map(Some),
         None => Ok(None),
@@ -96,7 +97,7 @@ fn opt_long(ctx: &mut Ctx, env: &Env, args: &Args, key: &str, pos: &Position) ->
 }
 
 /// `Casts.Regex`.
-fn regex_arg(ctx: &mut Ctx, env: &Env, args: &Args, key: &str, pos: &Position) -> R<JRegex> {
+fn regex_arg<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, key: &str, pos: &Position) -> R<JRegex> {
     let p = str_arg(ctx, env, args, key, pos)?;
     compile_regex(&p, &pos.key(key))
 }
@@ -157,7 +158,7 @@ fn crash<T>(what: &str, pos: &Position) -> R<T> {
 
 // ---- functions ----
 
-fn concat(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn concat<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "concat", pos)?;
     let sep = match args.eval_opt(ctx, env, "separator", pos)? {
         Some(s) => cast::string(&s, &pos.key("separator"))?.to_string(),
@@ -236,7 +237,7 @@ fn normalize(n: Normalizer, s: &str) -> String {
     }
 }
 
-fn casefold(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn casefold<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let terms = args.eval(ctx, env, "casefold", pos).and_then(|v| scalars(&v, &pos.key("casefold")));
     let norm = match args.eval_opt(ctx, env, "normalizer", pos) {
         Ok(None) => Ok(Normalizer::NfkcCaseFold),
@@ -268,12 +269,12 @@ fn casefold(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn regex_escape(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn regex_escape<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let s = str_arg(ctx, env, args, key, pos)?;
     Ok(Value::String(jregex::quote(&s)))
 }
 
-fn str_pred(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn str_pred<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (value, search) = join2(str_arg(ctx, env, args, key, pos), str_arg(ctx, env, args, "search", pos))?;
     Ok(Value::Bool(match key {
         "starts_with" | "startswith" => value.starts_with(&search),
@@ -282,13 +283,13 @@ fn str_pred(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) ->
     }))
 }
 
-fn contains_str_regex(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn contains_str_regex<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (value, re) = join2(str_arg(ctx, env, args, key, pos), regex_arg(ctx, env, args, "pattern", pos))?;
     check_subject(&re, &value, &pos.key("pattern"))?;
     Ok(Value::Bool(re.re.is_match(&value)))
 }
 
-fn find_str(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn find_str<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (value, find, start) = join3(
         str_arg(ctx, env, args, key, pos),
         str_arg(ctx, env, args, "find", pos),
@@ -307,7 +308,7 @@ fn find_str(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) ->
     }))
 }
 
-fn find_str_regex(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn find_str_regex<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (value, re, start, num) = join4(
         str_arg(ctx, env, args, key, pos),
         regex_arg(ctx, env, args, "pattern", pos),
@@ -358,7 +359,7 @@ fn und() -> LanguageIdentifier {
     LanguageIdentifier::UND
 }
 
-fn unary(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn unary<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let s = str_arg(ctx, env, args, key, pos)?;
     let cm = icu_casemap::CaseMapper::new();
     Ok(match key {
@@ -500,7 +501,7 @@ fn ngrams(s: &str, min: usize, max: usize) -> Vec<Value> {
     out
 }
 
-fn ngram(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn ngram<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (terms, min, max) = join3(
         args.eval(ctx, env, "ngram", pos).and_then(|v| scalars(&v, &pos.key("ngram"))),
         opt_long(ctx, env, args, "min", pos),
@@ -559,19 +560,19 @@ fn ngram(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     Ok(Value::Array(out))
 }
 
-fn repeat(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn repeat<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (s, n) = join2(str_arg(ctx, env, args, "repeat", pos), opt_long(ctx, env, args, "number", pos))?;
     let n = n.unwrap_or(2).min(1024) as i32;
     Ok(Value::String(if n > 0 { s.repeat(n as usize) } else { String::new() }))
 }
 
-fn space(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn space<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "space", pos)?;
     let n = cast::long(&v, &pos.key("space"))?;
     Ok(Value::String(if n > 0 { " ".repeat(n.min(1024) as usize) } else { String::new() }))
 }
 
-fn replace_str(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn replace_str<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (value, find, replace) = join3(
         str_arg(ctx, env, args, key, pos),
         str_arg(ctx, env, args, "find", pos),
@@ -580,7 +581,7 @@ fn replace_str(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position)
     Ok(Value::String(value.replace(&find, &replace)))
 }
 
-fn replace_str_regex(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn replace_str_regex<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let first = match args.eval_opt(ctx, env, "first", pos) {
         Ok(Some(v)) => cast::boolean(&v, &pos.key("first")).map(Some),
         Ok(None) => Ok(None),
@@ -599,7 +600,7 @@ fn replace_str_regex(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Pos
     }
 }
 
-fn sub_string(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn sub_string<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (value, start, length) = join3(
         str_arg(ctx, env, args, key, pos),
         opt_long(ctx, env, args, "start", pos),
@@ -918,7 +919,7 @@ fn print_spec(f: &FmtSpec, v: &Value, vpos: &Position, fpos: &Position) -> R<Str
     }
 }
 
-fn format(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn format<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (fmt, values) =
         join2(str_arg(ctx, env, args, "format", pos), args.eval(ctx, env, "values", pos))?;
     let values: Vec<Value> = cast::elems(&values, &pos.key("values")).into_iter().map(|(v, _)| v).collect();

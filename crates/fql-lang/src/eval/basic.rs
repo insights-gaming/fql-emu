@@ -11,11 +11,12 @@ use super::cast::{self, PathElem};
 use super::forms::{Args, Registry};
 use super::{apply_lambda, call_function, eval, eval_lambda_arg, json_type, Ctx, Env};
 use crate::error::{one, FaunaError, Position, R};
+use crate::Backend;
 use crate::value::{Object, Ref, Type, Value};
 use serde_json::Value as Json;
 use std::borrow::Cow;
 
-pub fn register(r: &mut Registry) {
+pub fn register<B: Backend>(r: &mut Registry<B>) {
     r.stub("at", &["at", "expr"], &[]);
     r.add("var", &["var"], &[], var);
     r.add("let", &["let", "in"], &[], let_);
@@ -92,7 +93,7 @@ pub fn register(r: &mut Registry) {
     r.add("is_role", &["is_role"], &[], |c, e, a, p| is_type("is_role", c, e, a, p));
 }
 
-fn var(_ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn var<B: Backend>(_ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     match args.req("var") {
         Json::String(name) => match env.lookup(name) {
             Some(v) => Ok(v.clone()),
@@ -105,7 +106,7 @@ fn var(_ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 /// `Let` bindings are sequential: each binding sees the previous ones.
 /// The driver sends `let` as an array of single-key objects (v4) or an
 /// object (older drivers).
-fn let_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn let_<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let bindings = args.req("let");
     let let_pos = pos.key("let");
     let mut env = env.clone();
@@ -135,7 +136,7 @@ fn let_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     eval(ctx, &env, args.req("in"), &pos.key("in"))
 }
 
-fn if_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn if_<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let cond = args.eval(ctx, env, "if", pos)?;
     let b = cast::boolean(&cond, &pos.key("if"))?;
     if b {
@@ -145,7 +146,7 @@ fn if_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn do_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn do_<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let p = pos.key("do");
     match args.req("do") {
         Json::Array(items) => {
@@ -163,7 +164,7 @@ fn do_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 }
 
 /// `{"object": {k: expr}}`: a literal object whose values are evaluated.
-fn object(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn object<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let p = pos.key("object");
     match args.req("object") {
         Json::Object(o) => {
@@ -187,11 +188,11 @@ fn object(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn quote(_ctx: &mut Ctx, _env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn quote<B: Backend>(_ctx: &mut Ctx<B>, _env: &Env, args: &Args, pos: &Position) -> R<Value> {
     crate::wire::decode_literal(args.req("quote"), &pos.key("quote"))
 }
 
-fn call(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn call<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let f = args.eval(ctx, env, "call", pos)?;
     let a = match args.get("arguments") {
         Some(j) => eval(ctx, env, j, &pos.key("arguments"))?,
@@ -200,18 +201,18 @@ fn call(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     call_function(ctx, &f, a, pos)
 }
 
-fn abort(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn abort<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "abort", pos)?;
     let msg = cast::string(&v, &pos.key("abort"))?;
     one(FaunaError::transaction_abort(msg, pos))
 }
 
-fn query(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn query<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let l = eval_lambda_arg(ctx, env, args.req("query"), &pos.key("query"))?;
     Ok(Value::Lambda(l))
 }
 
-fn equals(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn equals<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "equals", pos)?;
     let es = cast::one_or_more(&v, &pos.key("equals"))?;
     let first = &es[0].0;
@@ -288,7 +289,7 @@ fn select_lookup(container: &Value, path: &[PathElem], all: bool) -> Option<Valu
     } else {
         // `valueAtPath0(all = true)`: arrays along the path are traversed
         // and the matches concatenated (the index `select_as_index` rule).
-        Some(match super::sets::select_all(container, path) {
+        Some(match super::cast::select_all(container, path) {
             Some(Value::Array(a)) => Value::Array(a),
             Some(v) => Value::Array(vec![v]),
             None => Value::Array(vec![]),
@@ -298,8 +299,8 @@ fn select_lookup(container: &Value, path: &[PathElem], all: bool) -> Option<Valu
 
 /// The server evaluates `default` lazily: only when the path is missing.
 /// So `Select(0, [1], Abort("x"))` is `1`, not an abort.
-fn do_select(
-    ctx: &mut Ctx,
+fn do_select<B: Backend>(
+    ctx: &mut Ctx<B>,
     env: &Env,
     args: &Args,
     from: &Value,
@@ -316,7 +317,7 @@ fn do_select(
     }
 }
 
-fn select(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn select<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "select", pos)?;
     let path = cast::path(&path_v, &pos.key("select"))?;
     let from = args.eval(ctx, env, "from", pos)?;
@@ -327,35 +328,35 @@ fn select(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     do_select(ctx, env, args, &from, &path, all, pos)
 }
 
-fn select_all(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn select_all<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "select_all", pos)?;
     let path = cast::path(&path_v, &pos.key("select_all"))?;
     let from = args.eval(ctx, env, "from", pos)?;
     do_select(ctx, env, args, &from, &path, true, pos)
 }
 
-fn select_as_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn select_as_index<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "select_as_index", pos)?;
     let path = cast::path(&path_v, &pos.key("select_as_index"))?;
     let from = args.eval(ctx, env, "from", pos)?;
     do_select(ctx, env, args, &from, &path, true, pos)
 }
 
-fn contains_path(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn contains_path<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "contains_path", pos)?;
     let path = cast::path(&path_v, &pos.key("contains_path"))?;
     let container = args.eval(ctx, env, "in", pos)?;
     Ok(Value::Bool(value_at_path(&container, &path).is_some()))
 }
 
-fn contains_path_legacy(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn contains_path_legacy<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let path_v = args.eval(ctx, env, "contains", pos)?;
     let path = cast::path(&path_v, &pos.key("contains"))?;
     let container = args.eval(ctx, env, "in", pos)?;
     Ok(Value::Bool(value_at_path(&container, &path).is_some()))
 }
 
-fn contains_field(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn contains_field<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let f = args.eval(ctx, env, "contains_field", pos)?;
     let field = cast::string(&f, &pos.key("contains_field"))?;
     let container = args.eval(ctx, env, "in", pos)?;
@@ -365,7 +366,7 @@ fn contains_field(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Va
     Ok(Value::Bool(value_at_path(&container, &[PathElem::Key(field.to_string())]).is_some()))
 }
 
-fn contains_value(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn contains_value<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let value = args.eval(ctx, env, "contains_value", pos)?;
     let container = args.eval(ctx, env, "in", pos)?;
     match &container {
@@ -379,7 +380,7 @@ fn contains_value(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Va
             ))
         }
         Value::Set(s) => {
-            let elems = super::sets::materialize(ctx, s, &pos.key("in"))?;
+            let elems = B::materialize(ctx, s, &pos.key("in"))?;
             Ok(Value::Bool(elems.iter().any(|v| v.fauna_equals(&value))))
         }
         other => one(FaunaError::invalid_argument(
@@ -393,7 +394,7 @@ fn contains_value(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Va
 /// `Merge(left, right, lambda?)` (ObjectFunctions.scala). The default
 /// merge lambda keeps the right value; returning `null` from a custom
 /// lambda removes the key.
-fn merge(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn merge<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let left = args.eval(ctx, env, "merge", pos)?;
     let right = args.eval(ctx, env, "with", pos)?;
     let lam = match args.get("lambda") {
@@ -443,7 +444,7 @@ fn merge(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     Ok(Value::Object(out))
 }
 
-fn to_object(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_object<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_object", pos)?;
     let p = pos.key("to_object");
     match &v {
@@ -467,7 +468,7 @@ fn to_object(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> 
     }
 }
 
-fn to_array(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_array<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_array", pos)?;
     let p = pos.key("to_array");
     match v {
@@ -476,14 +477,14 @@ fn to_array(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         )),
         Value::Array(_) => Ok(v),
         Value::Page { data, .. } => Ok(Value::Array(data)),
-        Value::Set(s) => Ok(Value::Array(super::sets::materialize(ctx, &s, &p)?)),
+        Value::Set(s) => Ok(Value::Array(B::materialize(ctx, &s, &p)?)),
         other => one(FaunaError::invalid_cast(other.rtype(), Type::Array, &p)),
     }
 }
 
 // ---- refs ----
 
-fn scope_not_emulated(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<()> {
+fn scope_not_emulated<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<()> {
     if let Some(v) = args.eval_opt(ctx, env, "scope", pos)? {
         if v != Value::Null {
             return one(FaunaError::not_emulated("scoped refs (child databases)", &pos.key("scope")));
@@ -492,10 +493,10 @@ fn scope_not_emulated(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> 
     Ok(())
 }
 
-fn named_ref(
+fn named_ref<B: Backend>(
     key: &str,
     ctor: fn(&str) -> Ref,
-    ctx: &mut Ctx,
+    ctx: &mut Ctx<B>,
     env: &Env,
     args: &Args,
     pos: &Position,
@@ -506,31 +507,31 @@ fn named_ref(
     Ok(Value::Ref(ctor(name)))
 }
 
-fn database(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn database<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     named_ref("database", Ref::database, ctx, env, args, pos)
 }
 
-fn index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn index<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     named_ref("index", Ref::index, ctx, env, args, pos)
 }
 
-fn collection(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn collection<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     named_ref("collection", Ref::collection, ctx, env, args, pos)
 }
 
-fn collection_legacy(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn collection_legacy<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     named_ref("class", Ref::collection, ctx, env, args, pos)
 }
 
-fn function(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn function<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     named_ref("function", Ref::function, ctx, env, args, pos)
 }
 
-fn role(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn role<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     named_ref("role", Ref::role, ctx, env, args, pos)
 }
 
-fn native(key: &str, name: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn native<B: Backend>(key: &str, name: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     if v != Value::Null {
         return one(FaunaError::not_emulated("scoped refs (child databases)", &pos.key(key)));
@@ -539,7 +540,7 @@ fn native(key: &str, name: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Po
 }
 
 /// `Ref(Collection("x"), "123")` (RefFunction in BasicFunctions.scala).
-fn ref_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn ref_<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let cls = args.eval(ctx, env, "ref", pos)?;
     let id = args.eval(ctx, env, "id", pos)?;
     scope_not_emulated(ctx, env, args, pos)?;
@@ -559,16 +560,16 @@ fn ref_(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     Ok(Value::Ref(Ref::child(coll, &id_str)))
 }
 
-fn new_id(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn new_id<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let key = if args.get("new_id").is_some() { "new_id" } else { "next_id" };
     let v = args.eval(ctx, env, key, pos)?;
     cast::null(&v, &pos.key(key))?;
-    Ok(Value::String(ctx.db.new_id()))
+    Ok(Value::String(ctx.backend.new_id()))
 }
 
 // ---- type checks ----
 
-fn is_type(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn is_type<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let b = match key {
         "is_number" => matches!(v, Value::Long(_) | Value::Double(_)),
@@ -586,7 +587,7 @@ fn is_type(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> 
         "is_ref" => matches!(v, Value::Ref(_)),
         "is_set" => matches!(v, Value::Set(_)),
         "is_doc" => match &v {
-            Value::Ref(r) => r.is_document_ref() && ctx.db.exists_by_ref(r),
+            Value::Ref(r) => r.is_document_ref() && ctx.backend.exists_by_ref(r),
             Value::Object(o) => matches!(o.get("ref"), Some(Value::Ref(r)) if r.is_document_ref()) && o.contains_key("ts"),
             _ => false,
         },

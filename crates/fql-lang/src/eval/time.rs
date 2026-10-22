@@ -16,10 +16,11 @@ use super::string::jformat::java_double_to_string;
 use super::string::{join2, join3};
 use super::{Ctx, Env};
 use crate::error::{one, FaunaError, Position, R};
+use crate::Backend;
 use crate::value::{Date, Timestamp, Type, Value};
 use chrono::{Datelike, Timelike};
 
-pub fn register(r: &mut Registry) {
+pub fn register<B: Backend>(r: &mut Registry<B>) {
     r.add("time", &["time"], &[], time);
     r.add("now", &["now"], &[], now);
     r.add("epoch", &["epoch", "unit"], &[], epoch);
@@ -575,8 +576,8 @@ fn temporal(v: &Value, pos: &Position) -> R<Temporal> {
     }
 }
 
-fn arg<T>(
-    ctx: &mut Ctx,
+fn arg<T, B: Backend>(
+    ctx: &mut Ctx<B>,
     env: &Env,
     args: &Args,
     key: &str,
@@ -590,7 +591,7 @@ fn arg<T>(
 // ---- functions ----
 
 /// `TimeFunction`: errors are reported at the form, not the argument.
-fn parse_time(ctx: &Ctx, s: &str, pos: &Position) -> R<Value> {
+fn parse_time<B: Backend>(ctx: &Ctx<B>, s: &str, pos: &Position) -> R<Value> {
     if s == "now" {
         return Ok(Value::Time(ctx.ts));
     }
@@ -608,30 +609,30 @@ fn parse_date(s: &str, pos: &Position) -> R<Value> {
     }
 }
 
-fn time(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn time<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "time", pos)?;
     let s = cast::string(&v, &pos.key("time"))?;
     parse_time(ctx, s, pos)
 }
 
-fn now(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn now<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "now", pos)?;
     cast::null(&v, &pos.key("now"))?;
     Ok(Value::Time(ctx.ts))
 }
 
-fn date(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn date<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "date", pos)?;
     let s = cast::string(&v, &pos.key("date"))?;
     parse_date(s, pos)
 }
 
-fn epoch(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn epoch<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (n, (u, _)) = join2(arg(ctx, env, args, "epoch", pos, cast::long), arg(ctx, env, args, "unit", pos, unit))?;
     instant_of_nanos(n as i128 * u.nanos(), pos).map(Value::Time)
 }
 
-fn to_unit(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_unit<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let t = cast::timestamp(&v, &pos.key(key))?;
     Ok(Value::Long(match key {
@@ -641,7 +642,7 @@ fn to_unit(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> 
     }))
 }
 
-fn component(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn component<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let t = renderable(cast::timestamp(&v, &pos.key(key))?, &pos.key(key))?;
     let dt = t.to_naive();
@@ -657,7 +658,7 @@ fn component(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -
     }))
 }
 
-fn time_math(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn time_math<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (base, offset, (u, original)) = join3(
         arg(ctx, env, args, key, pos, temporal),
         arg(ctx, env, args, "offset", pos, cast::long),
@@ -699,7 +700,7 @@ fn instant_until(a: Timestamp, b: Timestamp, u: Unit) -> Option<i64> {
     i64::try_from(r).ok()
 }
 
-fn time_diff(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn time_diff<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let (start, finish, (u, original)) = join3(
         arg(ctx, env, args, "time_diff", pos, temporal),
         arg(ctx, env, args, "other", pos, temporal),
@@ -721,7 +722,7 @@ fn time_diff(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> 
     }
 }
 
-fn to_string(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_string<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_string", pos)?;
     match to_string_literal(&v) {
         Some(s) => Ok(Value::String(s)),
@@ -733,7 +734,7 @@ fn parse_number_arg(s: &str, pos: &Position) -> R<Option<JNum>> {
     parse_java_number(java_trim(s)).or_else(|what| one(FaunaError::not_emulated(&what, pos)))
 }
 
-fn to_number(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_number<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_number", pos)?;
     match &v {
         Value::Long(_) | Value::Double(_) => Ok(v),
@@ -746,7 +747,7 @@ fn to_number(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> 
     }
 }
 
-fn to_double(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_double<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_double", pos)?;
     let p = pos.key("to_double");
     match &v {
@@ -761,7 +762,7 @@ fn to_double(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> 
     }
 }
 
-fn to_integer(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_integer<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_integer", pos)?;
     let p = pos.key("to_integer");
     match &v {
@@ -777,7 +778,7 @@ fn to_integer(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value>
     }
 }
 
-fn to_time(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_time<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_time", pos)?;
     match &v {
         // `Timestamp.ofMillis`.
@@ -789,7 +790,7 @@ fn to_time(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn to_date(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn to_date<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "to_date", pos)?;
     match &v {
         Value::Time(t) => Ok(Value::Date(t.to_naive().date())),

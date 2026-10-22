@@ -27,16 +27,16 @@
 //! per-field `reverse` flag, and the doc is the source document's ref.
 
 use super::cast;
-use super::cast::PathElem;
-use super::forms::{Args, Registry};
+use super::cast::{select_all, PathElem};
+use super::effect::{is_inline_lambda, lambda_effect, Effect};
+use super::{Args, Registry};
 use super::{apply_lambda, eval, parse_lambda_expr, Ctx, Env};
 use crate::error::{one, Errors, FaunaError, Position, R};
 use crate::ordering;
 use crate::store::{Database, Document, IndexDef, SourceCollection, TermPath};
 use crate::value::{JoinTarget, Lambda, Ref, SetExpr, Type, Value};
-use serde_json::Value as Json;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 pub fn register(r: &mut Registry) {
     r.add("match_index", &["match", "index"], &[], match_index);
@@ -120,14 +120,14 @@ pub fn index_entries(
         None => return Ok(vec![]),
     };
     for (name, lam) in &source {
-        if lambda_effect(lam) != Effect::Pure {
+        if lambda_effect(ctx.registry, lam) != Effect::Pure {
             return one(FaunaError::not_emulated(
                 &format!("index binding '{}' that reads or writes (the server rejects it at CreateIndex)", name),
                 pos,
             ));
         }
     }
-    let rendered = ctx.db.render_document(collection, id, doc);
+    let rendered = ctx.backend.render_document(collection, id, doc);
     let mut bindings: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut extract = |ctx: &mut Ctx, path: &TermPath, is_term: bool| -> R<Vec<Extracted>> {
         let raw: Vec<Extracted> = match path {
@@ -185,142 +185,6 @@ pub fn index_entries(
 pub fn materialize_entries(ctx: &mut Ctx, set: &SetExpr, pos: &Position) -> R<Vec<Entry>> {
     let elems = snapshot(ctx, set, &SEvent::min(), &SEvent::max(), true, pos)?;
     Ok(elems.iter().map(|e| Entry { key: e.cursor(), value: e.covered() }).collect())
-}
-
-// ---------------------------------------------------------------------
-// Lambda effects (`Expression.maxEffect`)
-// ---------------------------------------------------------------------
-
-/// `fauna.model.runtime.Effect`, ordered by strength. The server computes
-/// a lambda's maximum effect statically and rejects impure lambdas in some
-/// contexts (`Join` targets must be pure, set `Filter`s may not write,
-/// index bindings must be pure).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Effect {
-    Pure,
-    Observation,
-    Read,
-    Write,
-}
-
-/// The static maximum effect of a lambda's body.
-pub fn lambda_effect(l: &Lambda) -> Effect {
-    expr_effect(&l.body)
-}
-
-fn is_inline_lambda(j: &Json) -> bool {
-    match j {
-        Json::Object(o) => {
-            o.contains_key("lambda")
-                && o.contains_key("expr")
-                && o.keys().all(|k| k == "lambda" || k == "expr" || k == "api_version")
-        }
-        _ => false,
-    }
-}
-
-/// The function effects from the server's `QFunction.effect` values.
-/// Forms not listed are pure.
-fn form_effect(name: &str) -> Effect {
-    match name {
-        "get" | "exists" | "paginate" | "first" | "last" | "key_from_secret" | "current_identity" | "identity"
-        | "has_current_identity" | "has_identity" | "identify" | "current_token" | "has_current_token"
-        | "contains_value" | "count" | "sum" | "mean" | "max" | "min" | "any" | "all" | "reduce" => Effect::Read,
-        "create" | "update" | "replace" | "delete" | "insert" | "remove" | "move_database" | "new_id" | "next_id"
-        | "login" | "logout" | "issue_access_jwt" | "create_collection" | "create_class" | "create_database"
-        | "create_index" | "create_key" | "create_function" | "create_role" | "create_access_provider" | "call" => {
-            Effect::Write
-        }
-        _ => Effect::Pure,
-    }
-}
-
-/// `Expression.maxEffect` of an unevaluated expression: the maximum of the
-/// form's own effect and its arguments' effects. Lambda literals are pure
-/// values, except where the server adds the lambda body's effect (the
-/// lambda of `Map`/`Foreach`/`Filter`/`Reduce`/`Merge`/`Join`).
-pub fn expr_effect(expr: &Json) -> Effect {
-    effect_of(expr, true)
-}
-
-/// Whether a function body may write, for `Mode::ReadOnlyPureCalls`.
-/// Unlike the server's `maxEffect`, a `call` form counts as a read: the
-/// callee is checked when that `Call` runs.
-pub fn body_writes(expr: &Json) -> bool {
-    effect_of(expr, false) == Effect::Write
-}
-
-fn effect_of(expr: &Json, cw: bool) -> Effect {
-    match expr {
-        Json::Array(items) => items.iter().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure),
-        Json::Object(o) => {
-            if o.len() == 1 && o.keys().next().map(|k| k.starts_with('@')).unwrap_or(false) {
-                return Effect::Pure;
-            }
-            if is_inline_lambda(expr) {
-                return Effect::Pure;
-            }
-            let keys: HashSet<&str> = o.keys().map(|k| k.as_str()).collect();
-            let name = super::forms::with_registry(|r| r.lookup(&keys).map(|f| f.name));
-            match name {
-                Some("quote") => return Effect::Pure,
-                Some("object") => {
-                    return match o.get("object") {
-                        Some(Json::Object(fields)) => {
-                            fields.values().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure)
-                        }
-                        Some(other) => effect_of(other, cw),
-                        None => Effect::Pure,
-                    }
-                }
-                Some("let") => {
-                    let bindings = match o.get("let") {
-                        Some(Json::Array(items)) => items
-                            .iter()
-                            .map(|b| match b {
-                                Json::Object(bo) => bo.values().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure),
-                                other => effect_of(other, cw),
-                            })
-                            .max()
-                            .unwrap_or(Effect::Pure),
-                        Some(Json::Object(bo)) => bo.values().map(|e| effect_of(e, cw)).max().unwrap_or(Effect::Pure),
-                        Some(other) => effect_of(other, cw),
-                        None => Effect::Pure,
-                    };
-                    return bindings.max(o.get("in").map(|e| effect_of(e, cw)).unwrap_or(Effect::Pure));
-                }
-                _ => {}
-            }
-            let mut eff = match name {
-                Some("call") if !cw => Effect::Read,
-                Some(n) => form_effect(n),
-                None => Effect::Pure,
-            };
-            for (k, v) in o {
-                let arg = if is_inline_lambda(v) {
-                    let body_counts = matches!(
-                        (name, k.as_str()),
-                        (Some("map"), "map")
-                            | (Some("foreach"), "foreach")
-                            | (Some("filter"), "filter")
-                            | (Some("reduce"), "reduce")
-                            | (Some("merge"), "lambda")
-                            | (Some("join"), "with")
-                    );
-                    if body_counts {
-                        v.get("expr").map(|e| effect_of(e, cw)).unwrap_or(Effect::Pure)
-                    } else {
-                        Effect::Pure
-                    }
-                } else {
-                    effect_of(v, cw)
-                };
-                eff = eff.max(arg);
-            }
-            eff
-        }
-        _ => Effect::Pure,
-    }
 }
 
 // ---------------------------------------------------------------------
@@ -413,7 +277,7 @@ pub fn identifier(ctx: &Ctx, v: &Value, pos: &Position) -> R<Option<SetExpr>> {
         Value::Set(s) => Ok(Some(s.clone())),
         Value::Ref(r) if is_native_collection(r) => Ok(Some(SetExpr::Documents(r.clone()))),
         Value::Ref(r) => {
-            check_ref(ctx.db, r, pos)?;
+            check_ref(ctx.backend, r, pos)?;
             Ok(None)
         }
         other => one(FaunaError::invalid_argument(&[Type::Ref, Type::Set], other.rtype(), pos)),
@@ -443,7 +307,7 @@ fn cast_iterable(ctx: &Ctx, v: &Value, pos: &Position) -> R<Iterable> {
         Value::Set(s) => Ok(Iterable::Set(s.clone())),
         Value::Ref(r) if is_native_collection(r) => Ok(Iterable::Set(SetExpr::Documents(r.clone()))),
         Value::Ref(r) => {
-            check_ref(ctx.db, r, pos)?;
+            check_ref(ctx.backend, r, pos)?;
             one(FaunaError::invalid_argument(&[Type::AbstractIterable], v.rtype(), pos))
         }
         other => one(FaunaError::invalid_argument(&[Type::AbstractIterable], other.rtype(), pos)),
@@ -480,7 +344,7 @@ fn cast_index_ident(ctx: &Ctx, v: &Value, pos: &Position) -> R<IndexIdent> {
     match v {
         Value::String(s) => Ok(IndexIdent::Name(s.clone())),
         Value::Ref(r) => {
-            check_ref(ctx.db, r, pos)?;
+            check_ref(ctx.backend, r, pos)?;
             if r.is_index_ref() {
                 Ok(IndexIdent::Ref(r.clone()))
             } else {
@@ -497,7 +361,7 @@ fn cast_match_terms(ctx: &Ctx, v: &Value, pos: &Position) -> R<Vec<Value>> {
     let mut out = Vec::new();
     let mut errs = Vec::new();
     for (t, p) in cast::elems(v, pos) {
-        if contains_unresolved(ctx.db, &t) {
+        if contains_unresolved(ctx.backend, &t) {
             errs.push(FaunaError::invalid_argument(&[Type::Any], t.rtype(), &p));
         } else {
             out.push(t);
@@ -515,7 +379,7 @@ fn cast_match_terms(ctx: &Ctx, v: &Value, pos: &Position) -> R<Vec<Value>> {
 fn make_match(ctx: &Ctx, ident: IndexIdent, terms: Vec<Value>, pos: &Position) -> R<Value> {
     let index = match ident {
         IndexIdent::Name(name) => {
-            if !ctx.db.indexes.contains_key(&name) {
+            if !ctx.backend.indexes.contains_key(&name) {
                 return one(FaunaError::unresolved_ref("index", &name, &pos.key("index")));
             }
             Ref::index(&name)
@@ -561,7 +425,7 @@ fn documents(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> 
     match &v {
         Value::Ref(r) if is_native_collection(r) => Ok(Value::Set(SetExpr::Documents(r.clone()))),
         Value::Ref(r) => {
-            check_ref(ctx.db, r, &p)?;
+            check_ref(ctx.backend, r, &p)?;
             if r.is_collection_ref() {
                 Ok(Value::Set(SetExpr::Documents(r.clone())))
             } else {
@@ -578,7 +442,7 @@ fn singleton(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> 
     let p = pos.key("singleton");
     match &v {
         Value::Ref(r) => {
-            check_ref(ctx.db, r, &p)?;
+            check_ref(ctx.backend, r, &p)?;
             Ok(Value::Set(SetExpr::Singleton(r.clone())))
         }
         other => one(FaunaError::invalid_argument(&[Type::Ref], other.rtype(), &p)),
@@ -791,7 +655,7 @@ fn range(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let ((set, from), to) = both(both(set, from), to)?;
     let set = cast_set(ctx, &set, &pos.key("range"))?;
     let check = |v: &Value, p: &Position| match v {
-        Value::Ref(r) => check_ref(ctx.db, r, p),
+        Value::Ref(r) => check_ref(ctx.backend, r, p),
         _ => Ok(()),
     };
     both(check(&from, &pos.key("from")), check(&to, &pos.key("to")))?;
@@ -813,13 +677,13 @@ fn join(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let source = cast_set(ctx, &source, &pos.key("join"))?;
     let target = match &with {
         Value::Lambda(l) => {
-            if lambda_effect(l) != Effect::Pure {
+            if lambda_effect(ctx.registry, l) != Effect::Pure {
                 return one(FaunaError::invalid_lambda_effect(true, &wp));
             }
             JoinTarget::Lambda(l.clone())
         }
         Value::Ref(r) => {
-            check_ref(ctx.db, r, &wp)?;
+            check_ref(ctx.backend, r, &wp)?;
             if r.is_index_ref() {
                 JoinTarget::Index(Ref::index(&r.id))
             } else {
@@ -907,43 +771,6 @@ fn flatten_into(items: Vec<Value>, out: &mut Vec<Value>) {
             Value::Array(inner) => flatten_into(inner, out),
             v if is_index_scalar(&v) => out.push(v),
             _ => out.push(Value::Null),
-        }
-    }
-}
-
-/// `ReadAdaptor.valueAtPath0` with `all = true`: arrays met along the
-/// path (or at its end) are traversed and their results concatenated.
-pub fn select_all(v: &Value, path: &[PathElem]) -> Option<Value> {
-    match v {
-        Value::Ref(r) => super::basic::ref_at_path(r, path),
-        Value::Array(items) => match path {
-            [PathElem::Index(i), rest @ ..] => {
-                let item = items.get(usize::try_from(*i).ok()?)?;
-                select_all(item, rest)
-            }
-            _ => {
-                let mut out = Vec::new();
-                for item in items {
-                    match select_all(item, path) {
-                        None => {}
-                        Some(Value::Array(inner)) => out.extend(inner),
-                        Some(other) => out.push(other),
-                    }
-                }
-                Some(Value::Array(out))
-            }
-        },
-        Value::Object(o) => match path {
-            [] => Some(v.clone()),
-            [PathElem::Key(k), rest @ ..] => select_all(o.get(k)?, rest),
-            _ => None,
-        },
-        _ => {
-            if path.is_empty() {
-                Some(v.clone())
-            } else {
-                None
-            }
         }
     }
 }
@@ -1270,7 +1097,7 @@ impl Shape {
 }
 
 fn index_def(ctx: &Ctx, r: &Ref, pos: &Position) -> R<IndexDef> {
-    match ctx.db.indexes.get(&r.id) {
+    match ctx.backend.indexes.get(&r.id) {
         Some(i) => Ok(i.clone()),
         None => one(FaunaError::unresolved_ref("index", &r.id, pos)),
     }
@@ -1346,7 +1173,7 @@ fn scan_match(ctx: &mut Ctx, idx: &IndexDef, terms: &[Value], pos: &Position) ->
                 }
             }
             SourceCollection::Wildcard => {
-                for c in ctx.db.collections.keys() {
+                for c in ctx.backend.collections.keys() {
                     if !colls.contains(c) {
                         colls.push(c.clone());
                     }
@@ -1358,17 +1185,17 @@ fn scan_match(ctx: &mut Ctx, idx: &IndexDef, terms: &[Value], pos: &Position) ->
     let mut out = Vec::new();
     for coll in colls {
         let docs: Vec<(String, Document)> =
-            ctx.db.documents_in(&coll).map(|(id, d)| (id.clone(), d.clone())).collect();
+            ctx.backend.documents_in(&coll).map(|(id, d)| (id.clone(), d.clone())).collect();
         for (id, doc) in docs {
             let entries = index_entries(ctx, idx, &coll, &id, &doc, pos)?;
             let r = Ref::document(&coll, &id);
-            let key = doc_key(ctx.db, &r);
+            let key = doc_key(ctx.backend, &r);
             for e in entries {
                 if e.terms.len() != terms.len() || !e.terms.iter().zip(terms).all(|(a, b)| term_key_eq(a, b)) {
                     continue;
                 }
                 let values =
-                    e.values.into_iter().zip(&flags).map(|(v, &rev)| Term::new(ctx.db, v, rev)).collect();
+                    e.values.into_iter().zip(&flags).map(|(v, &rev)| Term::new(ctx.backend, v, rev)).collect();
                 out.push(SEvent { values, doc: DocPos::Doc(r.clone(), key.clone()) });
             }
         }
@@ -1384,7 +1211,7 @@ fn element(db: &Database, r: Ref) -> SEvent {
 /// The documents of `Documents(coll)`; native collections list the schema
 /// documents (`SchemaSet`).
 fn documents_elems(ctx: &Ctx, coll: &Ref, pos: &Position) -> R<Vec<SEvent>> {
-    let db = &*ctx.db;
+    let db = &*ctx.backend;
     if coll.is_native() {
         let refs: Vec<Ref> = match coll.id.as_str() {
             "collections" => db.collections.keys().map(|n| Ref::collection(n)).collect(),
@@ -1487,11 +1314,11 @@ fn snapshot(ctx: &mut Ctx, set: &SetExpr, from: &SEvent, to: &SEvent, asc: bool,
         // `DocEventSet.snapshot`: the document, if it exists and its id is
         // within the bounds' document ids.
         SetExpr::Singleton(r) => {
-            let e = element(ctx.db, r.clone());
+            let e = element(ctx.backend, r.clone());
             let (min, max) = if asc { (from, to) } else { (to, from) };
             let inside =
                 cmp_doc(&min.doc, &e.doc) != Ordering::Greater && cmp_doc(&e.doc, &max.doc) != Ordering::Greater;
-            Ok(if inside && ctx.db.exists_by_ref(r) { vec![e] } else { vec![] })
+            Ok(if inside && ctx.backend.exists_by_ref(r) { vec![e] } else { vec![] })
         }
         SetExpr::Union(sets) => {
             let mut streams = Vec::with_capacity(sets.len());
@@ -1595,8 +1422,8 @@ fn snapshot(ctx: &mut Ctx, set: &SetExpr, from: &SEvent, to: &SEvent, asc: bool,
             // between the re-shaped bounds, and flip every element's
             // reverse flags (value-less elements get their ref as a
             // reversed value).
-            let inner_from = reshape_bound(ctx.db, from, !asc);
-            let inner_to = reshape_bound(ctx.db, to, asc);
+            let inner_from = reshape_bound(ctx.backend, from, !asc);
+            let inner_to = reshape_bound(ctx.backend, to, asc);
             let elems = snapshot(ctx, inner, &inner_from, &inner_to, !asc, pos)?;
             Ok(elems.into_iter().map(reshape_elem).collect())
         }
@@ -1723,7 +1550,7 @@ fn compare_cursors(a: &SEvent, b: &SEvent, floor: bool) -> Ordering {
 /// array) and the bound.
 fn parse_cursor(ctx: &Ctx, shape: &Shape, cursor: &Value, floor: bool, pos: &Position) -> R<(Value, SEvent)> {
     if let Value::Ref(r) = cursor {
-        check_ref(ctx.db, r, pos)?;
+        check_ref(ctx.backend, r, pos)?;
     }
     let terms: Vec<Value> = match cursor {
         Value::Array(items) => items.clone(),
@@ -1736,7 +1563,7 @@ fn parse_cursor(ctx: &Ctx, shape: &Shape, cursor: &Value, floor: bool, pos: &Pos
     let mk = |vals: &[Value], flags: &[bool]| -> Vec<Term> {
         vals.iter()
             .zip(flags.iter().chain(std::iter::repeat(&false)))
-            .map(|(v, &r)| Term::new(ctx.db, v.clone(), r))
+            .map(|(v, &r)| Term::new(ctx.backend, v.clone(), r))
             .collect()
     };
     let event = if c.is_empty() {
@@ -1751,7 +1578,7 @@ fn parse_cursor(ctx: &Ctx, shape: &Shape, cursor: &Value, floor: bool, pos: &Pos
             (mk(&t[..n], &shape.reversed), &c[0])
         };
         let doc = match head {
-            Value::Ref(r) => DocPos::Doc(r.clone(), doc_key(ctx.db, r)),
+            Value::Ref(r) => DocPos::Doc(r.clone(), doc_key(ctx.backend, r)),
             other => {
                 if ordering::compare(other, &Value::Ref(Ref::native(""))) == Ordering::Greater {
                     DocPos::Max
@@ -1823,6 +1650,9 @@ pub fn paginate(ctx: &mut Ctx, set: &SetExpr, cursor: PageCursor, size: Option<i
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::effect::{body_writes, expr_effect};
+    use super::super::registry;
+    use serde_json::Value as Json;
 
     #[test]
     fn scala_hash_map_order_is_stable() {
@@ -1841,22 +1671,6 @@ mod tests {
         assert_eq!(cmp_term(&a, &b), Ordering::Greater);
         let n = Term::new(&db, Value::Null, true);
         assert_eq!(cmp_term(&n, &a), Ordering::Less);
-    }
-
-    #[test]
-    fn select_all_traverses_arrays() {
-        let doc = Value::obj(vec![(
-            "data",
-            Value::obj(vec![(
-                "foo",
-                Value::Array(vec![
-                    Value::obj(vec![("baz", Value::Long(1))]),
-                    Value::obj(vec![("baz", Value::Long(2))]),
-                ]),
-            )]),
-        )]);
-        let path = vec![PathElem::Key("data".into()), PathElem::Key("foo".into()), PathElem::Key("baz".into())];
-        assert_eq!(select_all(&doc, &path), Some(Value::Array(vec![Value::Long(1), Value::Long(2)])));
     }
 
     #[test]
@@ -1880,16 +1694,16 @@ mod tests {
     #[test]
     fn body_writes_rates_calls_as_reads_but_writes_as_writes() {
         let j = |s: &str| serde_json::from_str::<Json>(s).unwrap();
-        assert!(!body_writes(&j(r#"{"concat": ["a", {"var": "n"}]}"#)));
-        assert!(!body_writes(&j(r#"{"get": {"var": "r"}}"#)));
-        assert!(!body_writes(&j(r#"{"call": {"function": "mk"}, "arguments": 1}"#)));
-        assert!(body_writes(&j(r#"{"create": {"collection": "users"}, "params": {"object": {}}}"#)));
-        assert!(body_writes(&j(r#"{"let": [{"x": {"delete": {"var": "r"}}}], "in": 1}"#)));
-        assert!(body_writes(&j(
+        assert!(!body_writes(registry(), &j(r#"{"concat": ["a", {"var": "n"}]}"#)));
+        assert!(!body_writes(registry(), &j(r#"{"get": {"var": "r"}}"#)));
+        assert!(!body_writes(registry(), &j(r#"{"call": {"function": "mk"}, "arguments": 1}"#)));
+        assert!(body_writes(registry(), &j(r#"{"create": {"collection": "users"}, "params": {"object": {}}}"#)));
+        assert!(body_writes(registry(), &j(r#"{"let": [{"x": {"delete": {"var": "r"}}}], "in": 1}"#)));
+        assert!(body_writes(registry(), &j(
             r#"{"map": {"lambda": "x", "expr": {"create": {"collection": "users"}, "params": {"object": {}}}}, "collection": [1]}"#
         )));
         // The server's own analysis still treats a call as a write.
-        assert_eq!(expr_effect(&j(r#"{"call": {"function": "mk"}, "arguments": 1}"#)), Effect::Write);
+        assert_eq!(expr_effect(registry(), &j(r#"{"call": {"function": "mk"}, "arguments": 1}"#)), Effect::Write);
     }
 
     #[test]
@@ -1917,7 +1731,7 @@ mod tests {
             ("n", Value::Null),
         ]);
         let doc = Document { ts, fields: obj(vec![("data", data)]) };
-        let mut ctx = Ctx::new(&mut db, ts);
+        let mut ctx = Ctx::new(&mut db, registry(), ts);
         let entries = index_entries(&mut ctx, &idx, "users", "1", &doc, &pos).unwrap();
         // tags: a, b (deduplicated); ts as a term is stored as null; the
         // values are [null, 7] (not all null, so kept).
@@ -1932,7 +1746,7 @@ mod tests {
 
     #[test]
     fn lambda_effects() {
-        let effect = |j: serde_json::Value| expr_effect(&j);
+        let effect = |j: serde_json::Value| expr_effect(registry(), &j);
         assert_eq!(effect(serde_json::json!({"match": {"index": "x"}, "terms": 1})), Effect::Pure);
         assert_eq!(effect(serde_json::json!({"get": {"var": "x"}})), Effect::Read);
         assert_eq!(effect(serde_json::json!({"select": ["a"], "from": {"get": {"var": "x"}}})), Effect::Read);

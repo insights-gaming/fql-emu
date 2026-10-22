@@ -9,19 +9,62 @@ faunadb Client.query(expr)
         └─ wasm FqlEmulator.query(body) → {status, body}
               └─ fql_emu_core::Emulator::query(json)
                     1. clone Database (working copy); ts = clock.next()
-                    2. eval(expr) with Ctx{db: &mut working, ts}
+                    2. eval(expr) with Ctx{backend: &mut working, registry, ts}
                     3. Ok  → commit working; 200 {"resource": encode(v)}
                        Err → discard;        4xx {"errors": [...]}
   └─ json.parseJSON(body) → values.Ref / FaunaTime / ...   (driver, unchanged)
   └─ errors.FaunaHTTPError.raiseForStatusCode(requestResult) (driver, unchanged)
 ```
 
+## Crates
+
+The language and the storage are separate crates:
+
+- **`fql-lang`** is the FQL v4 language with no storage: the wire codec,
+  values, errors (codes, descriptions, positions), ordering, key
+  permissions (`Mode`), the static effect analysis, the interpreter and form
+  registry, and every form that does not need a database (`let`, `if`,
+  `map`, `select`, `concat`, `time_add`, ...: the `basic`, `logic`,
+  `numeric`, `string`, `time` and `collection` modules). It does not depend
+  on `fql-emu-core` and could put the language in front of any storage.
+- **`fql-emu-core`** is the emulator: the in-memory `store::Database`, the
+  storage-bound forms (`eval/sets.rs`: `Match`, `Paginate`, set algebra;
+  `eval/read.rs`: `Get`, `Exists`, `CurrentIdentity`, ...;
+  `eval/write.rs`: `Create`, `Update`, `CreateCollection`, ...), and the
+  `Emulator` API (transactions, forks, schema bundles). It re-exports
+  `fql_lang::{value, wire, error, env, ordering, Mode}` so its public paths
+  are unchanged.
+
+The two meet at the `fql_lang::Backend` trait, the only storage the
+language forms touch:
+
+```rust
+pub trait Backend: Sized {
+    fn mode(&self) -> Mode;                         // key permissions
+    fn identity(&self) -> Option<&Ref>;             // CurrentIdentity()
+    fn new_id(&mut self) -> String;                 // NewId()
+    fn exists_by_ref(&self, r: &Ref) -> bool;       // IsDoc, `invalid ref` errors
+    fn function_body(&self, name: &str) -> Option<&Lambda>;  // Call
+    fn materialize(ctx: &mut Ctx<'_, Self>, set: &SetExpr, pos: &Position) -> R<Vec<Value>>;
+}
+```
+
+`Ctx<B>` carries `backend: &mut B` and the `registry: &Registry<B>` that
+dispatches forms; handlers are `fn(&mut Ctx<B>, &Env, &Args, &Position)`.
+The language forms are generic over `B`; a backend's own forms are
+written against its concrete type, so the emulator's read/write/set forms
+use `Ctx<Database>` and reach into the store directly. `Database`
+implements `Backend` (`materialize` is the brute-force set engine below),
+and the emulator's registry is `fql_lang::eval::language_forms()` plus
+`sets::register`, `read::register` and `write::register`, built once.
+
 ## Interpreter
 
-There is no separate AST. `eval::eval` walks the query JSON:
+There is no separate AST. `eval::eval` (in `fql-lang`) walks the query
+JSON:
 
 - scalars and arrays are literals (`1` → Long, `1.0` → Double);
-- an object is dispatched through `eval::forms::Registry` by its **exact key
+- an object is dispatched through the `Ctx`'s `Registry` by its **exact key
   set** (like Fauna's `MapRouter`): `{"let","in"}` → `basic::let_`,
   `{"match","index"}` → `sets::match_index`, ...;
 - otherwise a single `@`-key object is a wire escape (`@ref`, `@ts`, `@set`,
@@ -33,6 +76,13 @@ Handlers get the *unevaluated* arguments (`Args`) so lazy forms (`if`,
 `let`, `lambda`, `and`/`or`) can control evaluation. Argument positions
 follow the server: an error in argument `k` of a form at position `p` is at
 `p ++ [k]`, and varargs elements at `p ++ [k, i]`.
+
+Forms that are recognised but not emulated are registered as stubs
+(`Registry::stub`) and answer `not emulated`. `Registry::stub_with` gives
+a stub a handler for the checks the server makes first: the emulator uses
+it for `Insert`, `Remove`, `CreateDatabase`, `CreateKey` and
+`CreateAccessProvider`, which a read-only key denies before they would be
+reported as not emulated.
 
 `Lambda` values are closures over the `Env` (a persistent linked list).
 Stored UDF bodies are closures over the empty env. `MAX_STACK_DEPTH` = 200.

@@ -18,7 +18,7 @@
 
 use super::cast;
 use super::collection::unresolved_ref;
-use super::forms::{Args, Registry};
+use super::{Args, Registry};
 use super::sets;
 use super::{Ctx, Env};
 use crate::error::{one, FaunaError, PosElem, Position, ValidationFailure, R};
@@ -35,12 +35,23 @@ pub fn register(r: &mut Registry) {
     r.add("create_index", &["create_index"], &[], create_index);
     r.add("create_function", &["create_function"], &[], create_function);
     r.add("create_role", &["create_role"], &[], create_role);
-    r.stub("create_database", &["create_database"], &[]);
-    r.stub("create_key", &["create_key"], &[]);
-    r.stub("create_access_provider", &["create_access_provider"], &[]);
-    r.stub("insert", &["insert", "ts", "action"], &["params"]);
-    r.stub("remove", &["remove", "ts", "action"], &[]);
+    r.stub_with("create_database", &["create_database"], &[], |c, _, _, p| unsupported_write("create_database", true, c, p));
+    r.stub_with("create_key", &["create_key"], &[], |c, _, _, p| unsupported_write("create_key", true, c, p));
+    r.stub_with("create_access_provider", &["create_access_provider"], &[], |c, _, _, p| {
+        unsupported_write("create_access_provider", true, c, p)
+    });
+    r.stub_with("insert", &["insert", "ts", "action"], &["params"], |c, _, _, p| unsupported_write("insert", false, c, p));
+    r.stub_with("remove", &["remove", "ts", "action"], &[], |c, _, _, p| unsupported_write("remove", false, c, p));
     r.stub("move_database", &["move_database", "to"], &[]);
+}
+
+/// A write the emulator does not implement. A server-readonly key denies it
+/// first, at the position the server uses (the form for `Insert`/`Remove`,
+/// its argument for the `Create*` functions, `at_arg`), without evaluating
+/// the arguments.
+fn unsupported_write(name: &str, at_arg: bool, ctx: &mut Ctx, pos: &Position) -> R<Value> {
+    super::deny_if_read_only(ctx, &if at_arg { pos.key(name) } else { pos.clone() })?;
+    one(FaunaError::not_emulated(&format!("the `{}` function", name), pos))
 }
 
 fn create_collection(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
@@ -51,7 +62,7 @@ fn create_collection(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R
     // Schema writes are denied before their params are validated.
     super::deny_if_read_only(ctx, &pos.key(key))?;
     let ts = ctx.ts;
-    ctx.db.create_collection(params, ts, &pos.key(key))
+    ctx.backend.create_collection(params, ts, &pos.key(key))
 }
 
 fn create_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
@@ -61,7 +72,7 @@ fn create_index(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Valu
     // Schema writes are denied before their params are validated.
     super::deny_if_read_only(ctx, &pos.key("create_index"))?;
     let ts = ctx.ts;
-    ctx.db.create_index(params, ts, &pos.key("create_index"))
+    ctx.backend.create_index(params, ts, &pos.key("create_index"))
 }
 
 fn create_function(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
@@ -71,7 +82,7 @@ fn create_function(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<V
     // Schema writes are denied before their params are validated.
     super::deny_if_read_only(ctx, &pos.key("create_function"))?;
     let ts = ctx.ts;
-    ctx.db.create_function(params, ts, &pos.key("create_function"))
+    ctx.backend.create_function(params, ts, &pos.key("create_function"))
 }
 
 fn create_role(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
@@ -81,7 +92,7 @@ fn create_role(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value
     // Schema writes are denied before their params are validated.
     super::deny_if_read_only(ctx, &pos.key("create_role"))?;
     let ts = ctx.ts;
-    ctx.db.create_role(params, ts, &pos.key("create_role"))
+    ctx.backend.create_role(params, ts, &pos.key("create_role"))
 }
 
 // ---- argument handling ----
@@ -263,7 +274,7 @@ fn document_fields(ctx: &Ctx, coll: &str, prev: &Object, params: &Object, vpos: 
     // `UserDocumentWriteConfig.adjustTTL`: the collection TTL applies when
     // the document has none.
     if !fields.contains_key("ttl") {
-        if let Some(days) = ctx.db.collections.get(coll).and_then(|c| c.ttl_days) {
+        if let Some(days) = ctx.backend.collections.get(coll).and_then(|c| c.ttl_days) {
             let ttl = Timestamp::of_micros(ctx.ts.micros().saturating_add(days.saturating_mul(86_400_000_000)));
             fields.insert("ttl".into(), Value::Time(ttl));
         }
@@ -290,7 +301,7 @@ fn check_unique(
     pos: &Position,
 ) -> R<()> {
     let unique: Vec<IndexDef> =
-        ctx.db.indexes.values().filter(|i| i.unique && index_covers(i, coll)).cloned().collect();
+        ctx.backend.indexes.values().filter(|i| i.unique && index_covers(i, coll)).cloned().collect();
     for idx in unique {
         let new_entries = sets::index_entries(ctx, &idx, coll, id, new, pos)?;
         let old_entries = match old {
@@ -302,7 +313,7 @@ fn check_unique(
             continue;
         }
         let colls: Vec<String> = if idx.source.iter().any(|s| s.collection == SourceCollection::Wildcard) {
-            ctx.db.collections.keys().cloned().collect()
+            ctx.backend.collections.keys().cloned().collect()
         } else {
             let mut cs: Vec<String> = idx
                 .source
@@ -317,7 +328,7 @@ fn check_unique(
         };
         for c in colls {
             let docs: Vec<(String, Document)> =
-                ctx.db.documents_in(&c).map(|(i, d)| (i.clone(), d.clone())).collect();
+                ctx.backend.documents_in(&c).map(|(i, d)| (i.clone(), d.clone())).collect();
             for (oid, od) in docs {
                 if c == coll && oid == id {
                     continue;
@@ -347,8 +358,8 @@ fn write_document(
     let fields = document_fields(ctx, coll, base, params, vpos)?;
     let doc = Document { ts: ctx.ts, fields };
     check_unique(ctx, coll, id, prev, &doc, vpos)?;
-    let rendered = ctx.db.render_document(coll, id, &doc);
-    ctx.db.put_document(coll, id, doc, vpos)?;
+    let rendered = ctx.backend.render_document(coll, id, &doc);
+    ctx.backend.put_document(coll, id, doc, vpos)?;
     Ok(rendered)
 }
 
@@ -404,7 +415,7 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let ts = ctx.ts;
     let (coll, explicit_id) = match &target {
         Value::String(name) => {
-            if ctx.db.collections.contains_key(name) {
+            if ctx.backend.collections.contains_key(name) {
                 (name.clone(), None)
             } else if NATIVE_COLLECTIONS.contains(&name.as_str()) {
                 super::deny_if_read_only(ctx, &cpos)?;
@@ -418,10 +429,10 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         Value::Ref(r) if r.is_native() => {
             super::deny_if_read_only(ctx, &cpos)?;
             return match r.id.as_str() {
-                "collections" => ctx.db.create_collection(&params, ts, &cpos),
-                "indexes" => ctx.db.create_index(&params, ts, &cpos),
-                "functions" => ctx.db.create_function(&params, ts, &cpos),
-                "roles" => ctx.db.create_role(&params, ts, &cpos),
+                "collections" => ctx.backend.create_collection(&params, ts, &cpos),
+                "indexes" => ctx.backend.create_index(&params, ts, &cpos),
+                "functions" => ctx.backend.create_function(&params, ts, &cpos),
+                "roles" => ctx.backend.create_role(&params, ts, &cpos),
                 other => native_create_not_emulated(other, &cpos),
             };
         }
@@ -436,12 +447,12 @@ fn create(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     super::deny_if_read_only(ctx, &cpos)?;
     let id = match explicit_id {
         Some(id) => {
-            if ctx.db.exists_document(&coll, &id) {
+            if ctx.backend.exists_document(&coll, &id) {
                 return one(FaunaError::document_already_exists(&cpos));
             }
             id
         }
-        None => ctx.db.new_id(),
+        None => ctx.backend.new_id(),
     };
     write_document(ctx, &coll, &id, None, &Object::new(), &params, &cpos)
 }
@@ -483,7 +494,7 @@ fn update_or_replace(partial: bool, ctx: &mut Ctx, env: &Env, args: &Args, pos: 
 
     if let Some(coll) = r.document_collection() {
         let coll = coll.to_string();
-        let prev = match ctx.db.get_document(&coll, &r.id) {
+        let prev = match ctx.backend.get_document(&coll, &r.id) {
             Some(d) => d.clone(),
             None => return one(FaunaError::document_not_found(&vp)),
         };
@@ -556,18 +567,18 @@ fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &P
     }
     if r.is_collection_ref() {
         only_keys(params, &["name", "data", "history_days", "ttl_days"], "a collection", pos)?;
-        let cur = ctx.db.collections[&r.id].clone();
+        let cur = ctx.backend.collections[&r.id].clone();
         check_same_name(params, &cur.name, pos)?;
         // `prevForReplace` keeps `name` and `history_days`.
         let data = patch_data(if partial { cur.data.as_ref() } else { None }, params, pos)?;
         let history_days = opt_long_field(params, "history_days", cur.history_days, pos)?;
         let ttl_days = opt_long_field(params, "ttl_days", if partial { cur.ttl_days } else { None }, pos)?;
         let def = crate::store::CollectionDef { name: cur.name.clone(), ts, history_days, ttl_days, data };
-        let rendered = ctx.db.render_collection(&def);
+        let rendered = ctx.backend.render_collection(&def);
         // Updates to collection/index/role documents are visible to later
         // reads in the transaction (only function bodies are cached, see
         // the function branch).
-        ctx.db.collections.insert(cur.name, def);
+        ctx.backend.collections.insert(cur.name, def);
         return Ok(rendered);
     }
     if r.is_index_ref() {
@@ -575,17 +586,17 @@ fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &P
             return schema_not_emulated("`Replace` of an index", pos);
         }
         only_keys(params, &["name", "data"], "an index", pos)?;
-        let mut def = ctx.db.indexes[&r.id].clone();
+        let mut def = ctx.backend.indexes[&r.id].clone();
         check_same_name(params, &def.name, pos)?;
         def.data = patch_data(def.data.as_ref(), params, pos)?;
         def.ts = ts;
-        let rendered = ctx.db.render_index(&def);
-        ctx.db.indexes.insert(def.name.clone(), def);
+        let rendered = ctx.backend.render_index(&def);
+        ctx.backend.indexes.insert(def.name.clone(), def);
         return Ok(rendered);
     }
     if r.is_function_ref() {
         only_keys(params, &["name", "data", "body", "role"], "a function", pos)?;
-        let mut def = ctx.db.functions[&r.id].clone();
+        let mut def = ctx.backend.functions[&r.id].clone();
         check_same_name(params, &def.name, pos)?;
         match params.get("body") {
             Some(Value::Lambda(l)) => def.body = l.clone(),
@@ -610,23 +621,23 @@ fn update_schema(partial: bool, ctx: &mut Ctx, r: &Ref, params: &Object, pos: &P
             None => None,
         };
         def.ts = ts;
-        let rendered = ctx.db.render_function(&def);
+        let rendered = ctx.backend.render_function(&def);
         // The server resolves UDF bodies from a per-transaction cache taken at
         // the start: `Do(Update(Function(f), {body}), Call(f, ..))` runs the
         // old body (verified on the container). Hence pending until commit.
-        ctx.db.pending.push(PendingSchema::Function(def));
+        ctx.backend.pending.push(PendingSchema::Function(def));
         return Ok(rendered);
     }
     if r.is_role_ref() {
-        let mut def = ctx.db.roles[&r.id].clone();
+        let mut def = ctx.backend.roles[&r.id].clone();
         check_same_name(params, &def.name, pos)?;
         let mut diff = params.clone();
         diff.shift_remove("name");
         let base = if partial { def.fields.clone() } else { Object::new() };
         def.fields = patch(&base, &diff);
         def.ts = ts;
-        let rendered = ctx.db.render_role(&def);
-        ctx.db.roles.insert(def.name.clone(), def);
+        let rendered = ctx.backend.render_role(&def);
+        ctx.backend.roles.insert(def.name.clone(), def);
         return Ok(rendered);
     }
     let verb = if partial { "Update" } else { "Replace" };
@@ -645,41 +656,41 @@ fn delete(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
     if let Some(coll) = r.document_collection() {
         let coll = coll.to_string();
-        if !ctx.db.exists_document(&coll, &r.id) {
+        if !ctx.backend.exists_document(&coll, &r.id) {
             return one(FaunaError::document_not_found(pos));
         }
         super::deny_if_read_only(ctx, pos)?;
         // The server returns the deleted (previous) version, with its ts.
-        return match ctx.db.remove_document(&coll, &r.id) {
+        return match ctx.backend.remove_document(&coll, &r.id) {
             None => one(FaunaError::document_not_found(pos)),
-            Some(d) => Ok(ctx.db.render_document(&coll, &r.id, &d)),
+            Some(d) => Ok(ctx.backend.render_document(&coll, &r.id, &d)),
         };
     }
     super::deny_if_read_only(ctx, pos)?;
     // Schema deletes take effect at commit: for the rest of the transaction
     // the name still resolves and the documents are still readable.
     if r.is_collection_ref() {
-        let def = ctx.db.collections[&r.id].clone();
-        let rendered = ctx.db.render_collection(&def);
-        ctx.db.pending.push(PendingSchema::DeleteCollection(r.id.clone()));
+        let def = ctx.backend.collections[&r.id].clone();
+        let rendered = ctx.backend.render_collection(&def);
+        ctx.backend.pending.push(PendingSchema::DeleteCollection(r.id.clone()));
         return Ok(rendered);
     }
     if r.is_index_ref() {
-        let def = ctx.db.indexes[&r.id].clone();
-        let rendered = ctx.db.render_index(&def);
-        ctx.db.pending.push(PendingSchema::DeleteIndex(r.id.clone()));
+        let def = ctx.backend.indexes[&r.id].clone();
+        let rendered = ctx.backend.render_index(&def);
+        ctx.backend.pending.push(PendingSchema::DeleteIndex(r.id.clone()));
         return Ok(rendered);
     }
     if r.is_function_ref() {
-        let def = ctx.db.functions[&r.id].clone();
-        let rendered = ctx.db.render_function(&def);
-        ctx.db.pending.push(PendingSchema::DeleteFunction(r.id.clone()));
+        let def = ctx.backend.functions[&r.id].clone();
+        let rendered = ctx.backend.render_function(&def);
+        ctx.backend.pending.push(PendingSchema::DeleteFunction(r.id.clone()));
         return Ok(rendered);
     }
     if r.is_role_ref() {
-        let def = ctx.db.roles[&r.id].clone();
-        let rendered = ctx.db.render_role(&def);
-        ctx.db.pending.push(PendingSchema::DeleteRole(r.id.clone()));
+        let def = ctx.backend.roles[&r.id].clone();
+        let rendered = ctx.backend.render_role(&def);
+        ctx.backend.pending.push(PendingSchema::DeleteRole(r.id.clone()));
         return Ok(rendered);
     }
     one(FaunaError::not_emulated(&format!("`Delete` of {}", r.display()), &dp))

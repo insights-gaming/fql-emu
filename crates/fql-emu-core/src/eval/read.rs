@@ -5,7 +5,7 @@
 //! size 64, max 100000), AuthFunctions.scala.
 
 use super::cast;
-use super::forms::{Args, Registry};
+use super::{Args, Registry};
 use super::{Ctx, Env};
 use super::sets::PageCursor;
 use crate::error::{one, Errors, FaunaError, Position, R};
@@ -67,7 +67,7 @@ fn get(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
             if let Some(e) = super::collection::unresolved_ref(ctx, &v, &p) {
                 return one(e);
             }
-            match ctx.db.get_by_ref(r) {
+            match ctx.backend.get_by_ref(r) {
                 Some(doc) => Ok(doc),
                 None => match native_kind(r) {
                     Some(kind) => one(FaunaError::native_not_found(kind, pos)),
@@ -80,7 +80,7 @@ fn get(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
             // (`EventSet.snapshotHead`), whatever values the set covers.
             let entries = super::sets::materialize_entries(ctx, s, &p)?;
             match entries.first().and_then(|e| e.key.last()) {
-                Some(Value::Ref(r)) => match ctx.db.get_by_ref(r) {
+                Some(Value::Ref(r)) => match ctx.backend.get_by_ref(r) {
                     Some(doc) => Ok(doc),
                     None => one(FaunaError::document_not_found(pos)),
                 },
@@ -96,7 +96,7 @@ fn exists(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     ts_not_emulated(ctx, env, args, pos)?;
     let p = pos.key("exists");
     match &v {
-        Value::Ref(r) => Ok(Value::Bool(ctx.db.exists_by_ref(r))),
+        Value::Ref(r) => Ok(Value::Bool(ctx.backend.exists_by_ref(r))),
         Value::Set(s) => Ok(Value::Bool(!super::sets::materialize(ctx, s, &p)?.is_empty())),
         other => one(FaunaError::invalid_argument(&[Type::Ref, Type::Set], other.rtype(), &p)),
     }

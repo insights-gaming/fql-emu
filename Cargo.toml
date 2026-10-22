@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/fql-emu-core", "crates/fql-emu-wasm"]
+members = ["crates/fql-lang", "crates/fql-emu-core", "crates/fql-emu-wasm"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,19 @@
+[package]
+name = "fql-lang"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The FQL v4 query language: wire format, values, errors, ordering and interpreter, independent of any storage"
+readme = "README.md"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = "2"
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["std", "alloc"] }
+icu_collator = "1"
+icu_locid = "1"
+icu_normalizer = "1.5"
+icu_casemap = "1.5"
+icu_properties = "1.5"

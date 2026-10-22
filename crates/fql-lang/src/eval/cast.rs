@@ -183,3 +183,61 @@ pub fn array_like<'a>(v: &'a Value, pos: &Position) -> R<&'a Vec<Value>> {
         other => one(FaunaError::invalid_argument(&[Type::Array], other.rtype(), pos)),
     }
 }
+
+/// `ReadAdaptor.valueAtPath0` with `all = true`: arrays met along the
+/// path (or at its end) are traversed and their results concatenated.
+pub fn select_all(v: &Value, path: &[PathElem]) -> Option<Value> {
+    match v {
+        Value::Ref(r) => super::basic::ref_at_path(r, path),
+        Value::Array(items) => match path {
+            [PathElem::Index(i), rest @ ..] => {
+                let item = items.get(usize::try_from(*i).ok()?)?;
+                select_all(item, rest)
+            }
+            _ => {
+                let mut out = Vec::new();
+                for item in items {
+                    match select_all(item, path) {
+                        None => {}
+                        Some(Value::Array(inner)) => out.extend(inner),
+                        Some(other) => out.push(other),
+                    }
+                }
+                Some(Value::Array(out))
+            }
+        },
+        Value::Object(o) => match path {
+            [] => Some(v.clone()),
+            [PathElem::Key(k), rest @ ..] => select_all(o.get(k)?, rest),
+            _ => None,
+        },
+        _ => {
+            if path.is_empty() {
+                Some(v.clone())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_all_traverses_arrays() {
+        let doc = Value::obj(vec![(
+            "data",
+            Value::obj(vec![(
+                "foo",
+                Value::Array(vec![
+                    Value::obj(vec![("baz", Value::Long(1))]),
+                    Value::obj(vec![("baz", Value::Long(2))]),
+                ]),
+            )]),
+        )]);
+        let path = vec![PathElem::Key("data".into()), PathElem::Key("foo".into()), PathElem::Key("baz".into())];
+        assert_eq!(select_all(&doc, &path), Some(Value::Array(vec![Value::Long(1), Value::Long(2)])));
+    }
+}

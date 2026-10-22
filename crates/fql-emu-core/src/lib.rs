@@ -16,18 +16,21 @@
 //! The entry point is [`Emulator::query`], which takes the JSON body the
 //! `faunadb` JS driver would POST and returns the HTTP status and JSON
 //! body the server would answer with.
+//!
+//! The language itself (wire format, values, errors, ordering, the
+//! interpreter and every form that needs no storage) is the `fql-lang`
+//! crate; this crate adds the in-memory [`store`], implements
+//! [`fql_lang::Backend`] for it, and registers the set, read and write
+//! forms ([`eval`]). `value`, `wire`, `error`, `env`, `ordering` and
+//! [`Mode`] are re-exported from `fql-lang`.
 
-pub mod env;
-pub mod error;
 pub mod eval;
-pub mod ordering;
 pub mod store;
-pub mod value;
-pub mod wire;
+
+pub use fql_lang::{env, error, ordering, value, wire, Mode};
 
 use error::{FaunaError, Position};
 use serde_json::{json, Value as Json};
-pub use store::Mode;
 use store::{Clock, Database};
 use value::{Timestamp, Value};
 
@@ -138,7 +141,7 @@ impl Emulator {
             // counter can move (`NewId()`), which a failed query rolls back.
             let next_id = self.db.next_id;
             let r = {
-                let mut ctx = eval::Ctx::new(&mut self.db, ts);
+                let mut ctx = eval::Ctx::new(&mut self.db, eval::registry(), ts);
                 eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root())
             };
             debug_assert!(self.db.pending.is_empty(), "read-only query staged a write");
@@ -149,7 +152,7 @@ impl Emulator {
         }
         let mut working = self.db.clone();
         let (r, wrote) = {
-            let mut ctx = eval::Ctx::new(&mut working, ts);
+            let mut ctx = eval::Ctx::new(&mut working, eval::registry(), ts);
             let r = eval::eval(&mut ctx, &env::Env::empty(), expr, &Position::root());
             (r, ctx.wrote)
         };
@@ -211,7 +214,7 @@ impl Emulator {
     /// Names of every form the registry knows, with whether it is
     /// implemented. Useful for docs and coverage reports.
     pub fn supported_forms() -> Vec<(&'static str, bool)> {
-        eval::forms::with_registry(|r| r.names())
+        eval::registry().names()
     }
 
     pub fn stats(&self) -> Json {

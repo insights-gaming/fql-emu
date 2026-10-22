@@ -10,9 +10,10 @@ use super::forms::{Args, Registry};
 use super::string::jformat::java_double_to_string;
 use super::{Ctx, Env};
 use crate::error::{one, FaunaError, Position, R};
+use crate::Backend;
 use crate::value::Value;
 
-pub fn register(r: &mut Registry) {
+pub fn register<B: Backend>(r: &mut Registry<B>) {
     r.add("add", &["add"], &[], |c, e, a, p| fold("add", "add", c, e, a, p));
     r.add("subtract", &["subtract"], &[], |c, e, a, p| fold("subtract", "subtract", c, e, a, p));
     r.add("multiply", &["multiply"], &[], |c, e, a, p| fold("multiply", "multiply", c, e, a, p));
@@ -65,7 +66,7 @@ fn numbers(v: &Value, p: &Position) -> R<Vec<Num>> {
 }
 
 /// `NumberFolds`: once the accumulator is a Double it stays one.
-fn fold(key: &str, op: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn fold<B: Backend>(key: &str, op: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let nums = numbers(&v, &pos.key(key))?;
     let mut acc = nums[0];
@@ -114,7 +115,7 @@ fn bounds(n: Num, predicate: &str, pos: &Position) -> R<Value> {
     one(FaunaError::bounds(&s, predicate, pos))
 }
 
-fn unary(key: &str, op: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn unary<B: Backend>(key: &str, op: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let n = cast::number(&v, &pos.key(key))?;
     let x = n.as_f64();
@@ -201,7 +202,7 @@ fn trunc_double(num: f64, dp: i64) -> f64 {
     }
 }
 
-fn precision_fn(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn precision_fn<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let n = args.eval(ctx, env, key, pos).and_then(|v| cast::number(&v, &pos.key(key)));
     let dp = match args.eval_opt(ctx, env, "precision", pos) {
         Ok(Some(v)) => cast::long(&v, &pos.key("precision")).map(Some),
@@ -218,20 +219,20 @@ fn precision_fn(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position
     })
 }
 
-fn opt_number(ctx: &mut Ctx, env: &Env, args: &Args, key: &str, pos: &Position) -> R<Option<Num>> {
+fn opt_number<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, key: &str, pos: &Position) -> R<Option<Num>> {
     match args.eval_opt(ctx, env, key, pos)? {
         Some(v) => cast::number(&v, &pos.key(key)).map(Some),
         None => Ok(None),
     }
 }
 
-fn hypot(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn hypot<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let a = args.eval(ctx, env, "hypot", pos).and_then(|v| cast::number(&v, &pos.key("hypot")));
     let (a, b) = super::string::join2(a, opt_number(ctx, env, args, "b", pos))?;
     Ok(Value::Double(a.as_f64().hypot(b.unwrap_or(a).as_f64())))
 }
 
-fn pow(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn pow<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let a = args.eval(ctx, env, "pow", pos).and_then(|v| cast::number(&v, &pos.key("pow")));
     let (a, e) = super::string::join2(a, opt_number(ctx, env, args, "exp", pos))?;
     Ok(Value::Double(a.as_f64().powf(e.map(|e| e.as_f64()).unwrap_or(2.0))))

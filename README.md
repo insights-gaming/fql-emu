@@ -50,13 +50,18 @@ drop-in shim for the `faunadb` JS driver's `Client.query`.
 ## Layout
 
 ```
-crates/fql-emu-core/        # the emulator (pure Rust, no I/O)
+crates/fql-lang/            # the FQL v4 language, independent of any storage (reusable)
   src/value.rs              # value model (Ref, Time, Date, Set, Lambda, Page, ...)
   src/ordering.rs           # Fauna cross-type total order (ICU root collation for strings)
   src/wire.rs               # @ref/@ts/@date/@set/@bytes/@query/@obj codec
   src/error.rs              # error codes, descriptions, positions, HTTP status
+  src/mode.rs, effect.rs    # key permissions; static write-effect analysis
+  src/backend.rs            # the `Backend` trait: the storage surface the language forms need
+  src/eval/                 # interpreter, form registry, storage-independent forms
+  tests/no_storage.rs       # runs queries against a trivial backend with no storage
+crates/fql-emu-core/        # the emulator (pure Rust, no I/O): fql-lang + an in-memory store
   src/store.rs              # documents, collections, indexes, functions; fork = clone; caps
-  src/eval/                 # the interpreter; one module per function family
+  src/eval/                 # `Backend` for the store; sets/indexes, reads, writes
   tests/conformance.rs      # runs conformance/cases/*.json
 crates/fql-emu-wasm/        # wasm-bindgen wrapper
 js/                         # @insights-gaming/fql-emu: Client.query shim + vitest tests
@@ -64,6 +69,12 @@ conformance/cases/*.json    # wire-format cases ported from Fauna's own specs
 scripts/build-wasm.sh       # builds js/wasm/ (uses nix if wasm-pack is absent)
 docs/                       # fql-v4-spec.md (semantics + source links), architecture, schema bundle format
 ```
+
+`fql-lang` is the query language on its own: parse and evaluate the driver's
+JSON, with Fauna's exact errors, against whatever storage implements its
+`Backend` trait. The emulator is one such storage; another project can reuse
+`fql-lang` to put the same language in front of a real database (see
+`crates/fql-lang/README.md`).
 
 ## Build and test
 

@@ -8,12 +8,13 @@ use super::cast;
 use super::forms::{Args, Registry};
 use super::{eval, Ctx, Env};
 use crate::error::{Position, R};
+use crate::Backend;
 use crate::ordering::compare;
 use crate::value::Value;
 use serde_json::Value as Json;
 use std::cmp::Ordering;
 
-pub fn register(r: &mut Registry) {
+pub fn register<B: Backend>(r: &mut Registry<B>) {
     r.add("and", &["and"], &[], and);
     r.add("or", &["or"], &[], or);
     r.add("not", &["not"], &[], not);
@@ -24,7 +25,7 @@ pub fn register(r: &mut Registry) {
 }
 
 /// Short-circuit evaluation of the operands of `And`/`Or`.
-fn short_circuit(key: &str, stop_on: bool, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn short_circuit<B: Backend>(key: &str, stop_on: bool, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let p = pos.key(key);
     match args.req(key) {
         Json::Array(items) => {
@@ -50,20 +51,20 @@ fn short_circuit(key: &str, stop_on: bool, ctx: &mut Ctx, env: &Env, args: &Args
     }
 }
 
-fn and(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn and<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     short_circuit("and", false, ctx, env, args, pos)
 }
 
-fn or(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn or<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     short_circuit("or", true, ctx, env, args, pos)
 }
 
-fn not(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn not<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "not", pos)?;
     Ok(Value::Bool(!cast::boolean(&v, &pos.key("not"))?))
 }
 
-fn cmp(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn cmp<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let es = cast::one_or_more(&v, &pos.key(key))?;
     let ok = es.windows(2).all(|w| {

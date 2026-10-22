@@ -22,16 +22,17 @@
 //!   are reported at `[fn, "lambda"]` and body errors under `[fn, "expr"]`.
 
 use super::cast;
-use super::forms::{with_registry, Args, Registry};
+use super::forms::{Args, Registry};
 use super::{apply_lambda, json_type, parse_lambda_expr, Ctx, Env};
 use crate::error::{one, FaunaError, Position, R};
+use crate::Backend;
 use crate::ordering;
-use crate::value::{Lambda, SetExpr, Type, Value};
+use crate::value::{Lambda, Ref, SetExpr, Type, Value};
 use serde_json::Value as Json;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
-pub fn register(r: &mut Registry) {
+pub fn register<B: Backend>(r: &mut Registry<B>) {
     r.add("map", &["map", "collection"], &[], map);
     r.add("foreach", &["foreach", "collection"], &[], foreach);
     r.add("filter", &["filter", "collection"], &[], filter);
@@ -85,41 +86,42 @@ enum Iter {
 /// If `v` is a ref the server would have produced as an `UnresolvedRefL`
 /// (a schema ref or document ref whose collection does not exist), the
 /// matching `invalid ref` error.
-pub fn unresolved_ref(ctx: &Ctx, v: &Value, pos: &Position) -> Option<FaunaError> {
+pub fn unresolved_ref<B: Backend>(ctx: &Ctx<B>, v: &Value, pos: &Position) -> Option<FaunaError> {
     let r = match v {
         Value::Ref(r) => r,
         _ => return None,
     };
-    let db = &*ctx.db;
-    let missing = |kind: &str, name: &str| Some(FaunaError::unresolved_ref(kind, name, pos));
-    if r.is_collection_ref() {
-        return if db.collections.contains_key(&r.id) { None } else { missing("collection", &r.id) };
+    let (kind, name, probe) = if r.is_collection_ref() {
+        ("collection", r.id.as_str(), None)
+    } else if r.is_index_ref() {
+        ("index", r.id.as_str(), None)
+    } else if r.is_function_ref() {
+        ("function", r.id.as_str(), None)
+    } else if r.is_role_ref() {
+        ("role", r.id.as_str(), None)
+    } else if let Some(coll) = r.document_collection() {
+        // A document ref resolves when its collection does.
+        ("collection", coll, Some(Ref::collection(coll)))
+    } else {
+        return None;
+    };
+    if ctx.backend.exists_by_ref(probe.as_ref().unwrap_or(r)) {
+        None
+    } else {
+        Some(FaunaError::unresolved_ref(kind, name, pos))
     }
-    if r.is_index_ref() {
-        return if db.indexes.contains_key(&r.id) { None } else { missing("index", &r.id) };
-    }
-    if r.is_function_ref() {
-        return if db.functions.contains_key(&r.id) { None } else { missing("function", &r.id) };
-    }
-    if r.is_role_ref() {
-        return if db.roles.contains_key(&r.id) { None } else { missing("role", &r.id) };
-    }
-    if let Some(coll) = r.document_collection() {
-        return if db.collections.contains_key(coll) { None } else { missing("collection", coll) };
-    }
-    None
 }
 
 /// `Casts.Iterable`: Array, Page, or Set (native collection refs such as
 /// `Collections()` are schema sets, which the emulator does not iterate).
-fn iterable(ctx: &Ctx, v: Value, pos: &Position) -> R<Iter> {
+fn iterable<B: Backend>(ctx: &Ctx<B>, v: Value, pos: &Position) -> R<Iter> {
     match v {
         Value::Array(a) => Ok(Iter::Array(a)),
         Value::Page { data, before, after } => Ok(Iter::Page { data, before, after }),
         Value::Set(s) => Ok(Iter::Set(s)),
         Value::Ref(r) if r.is_native() => {
             // A server-readonly key is denied these before anything iterates.
-            if ctx.db.mode.is_read_only() && matches!(r.id.as_str(), "roles" | "databases" | "keys" | "access_providers") {
+            if ctx.backend.mode().is_read_only() && matches!(r.id.as_str(), "roles" | "databases" | "keys" | "access_providers") {
                 return one(FaunaError::permission_denied(pos));
             }
             one(FaunaError::not_emulated("iterating native collections (schema sets)", pos))
@@ -139,7 +141,7 @@ fn page(data: Vec<Value>, before: Option<Box<Value>>, after: Option<Box<Value>>)
 
 // ---- map / foreach / filter / reduce ----
 
-fn map(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn map<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let lp = pos.key("map");
     let lam = inline_lambda(env, args.req("map"), &lp)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
@@ -151,7 +153,7 @@ fn map(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn map_values(ctx: &mut Ctx, lam: &Lambda, items: &[Value], lp: &Position) -> R<Vec<Value>> {
+fn map_values<B: Backend>(ctx: &mut Ctx<B>, lam: &Lambda, items: &[Value], lp: &Position) -> R<Vec<Value>> {
     let mut out = Vec::with_capacity(items.len());
     for it in items {
         out.push(apply_lambda(ctx, lam, it.clone(), lp)?);
@@ -159,7 +161,7 @@ fn map_values(ctx: &mut Ctx, lam: &Lambda, items: &[Value], lp: &Position) -> R<
     Ok(out)
 }
 
-fn foreach(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn foreach<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let lp = pos.key("foreach");
     let lam = inline_lambda(env, args.req("foreach"), &lp)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
@@ -180,7 +182,7 @@ fn foreach(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 /// `AbstractMapFunction.filterValues`: the lambda results are cast with
 /// `ZeroOrMore(Boolean)` at the form position, so a non-boolean result is
 /// reported at `pos ++ [i]`.
-fn filter_values(ctx: &mut Ctx, lam: &Lambda, items: Vec<Value>, lp: &Position, pos: &Position) -> R<Vec<Value>> {
+fn filter_values<B: Backend>(ctx: &mut Ctx<B>, lam: &Lambda, items: Vec<Value>, lp: &Position, pos: &Position) -> R<Vec<Value>> {
     let mut keep = Vec::with_capacity(items.len());
     for it in &items {
         keep.push(apply_lambda(ctx, lam, it.clone(), lp)?);
@@ -224,25 +226,25 @@ const WRITE_FORMS: &[&str] = &[
     "call",
 ];
 
-fn has_write_effect(j: &Json) -> bool {
+fn has_write_effect<B>(reg: &Registry<B>, j: &Json) -> bool {
     match j {
-        Json::Array(items) => items.iter().any(has_write_effect),
+        Json::Array(items) => items.iter().any(|i| has_write_effect(reg, i)),
         Json::Object(o) => {
             if o.contains_key("quote") || o.keys().any(|k| k.starts_with('@')) {
                 return false;
             }
             if let (Some(Json::Object(fields)), 1) = (o.get("object"), o.len()) {
-                return fields.values().any(has_write_effect);
+                return fields.values().any(|v| has_write_effect(reg, v));
             }
             let keys: HashSet<&str> = o.keys().map(|k| k.as_str()).collect();
-            let form = with_registry(|r| r.lookup(&keys).map(|f| f.name));
-            form.is_some_and(|name| WRITE_FORMS.contains(&name)) || o.values().any(has_write_effect)
+            let form = reg.lookup(&keys).map(|f| f.name);
+            form.is_some_and(|name| WRITE_FORMS.contains(&name)) || o.values().any(|v| has_write_effect(reg, v))
         }
         _ => false,
     }
 }
 
-fn filter(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn filter<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let lp = pos.key("filter");
     let lam = inline_lambda(env, args.req("filter"), &lp)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
@@ -250,7 +252,7 @@ fn filter(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         Iter::Array(items) => Ok(Value::Array(filter_values(ctx, &lam, items, &lp, pos)?)),
         Iter::Page { data, before, after } => Ok(page(filter_values(ctx, &lam, data, &lp, pos)?, before, after)),
         Iter::Set(source) => {
-            if has_write_effect(&lam.body) {
+            if has_write_effect(ctx.registry, &lam.body) {
                 return one(FaunaError::invalid_lambda_effect(false, &lp));
             }
             Ok(Value::Set(SetExpr::Filter { lambda: lam, source: Box::new(source) }))
@@ -258,12 +260,12 @@ fn filter(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn reduce(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn reduce<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let lp = pos.key("reduce");
     let lam = inline_lambda(env, args.req("reduce"), &lp)?;
     let initial = args.eval(ctx, env, "initial", pos)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
-    let step = |ctx: &mut Ctx, items: Vec<Value>| -> R<Value> {
+    let step = |ctx: &mut Ctx<B>, items: Vec<Value>| -> R<Value> {
         let mut acc = initial.clone();
         for it in items {
             acc = apply_lambda(ctx, &lam, Value::Array(vec![acc, it]), &lp)?;
@@ -274,7 +276,7 @@ fn reduce(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
         Iter::Array(items) => step(ctx, items),
         Iter::Page { data, before, after } => Ok(page(vec![step(ctx, data)?], before, after)),
         Iter::Set(s) => {
-            let items = super::sets::materialize(ctx, &s, &lp)?;
+            let items = B::materialize(ctx, &s, &lp)?;
             step(ctx, items)
         }
     }
@@ -308,7 +310,7 @@ impl Fold {
 }
 
 /// `AbstractFoldFunction.fold` for the folds without a lambda.
-fn fold_simple(f: Fold, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn fold_simple<B: Backend>(f: Fold, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let name = f.name();
     let p = pos.key(name);
     let mut v = args.eval(ctx, env, name, pos)?;
@@ -325,13 +327,13 @@ fn fold_simple(f: Fold, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -
         Iter::Array(items) => fold_values(f, ctx, &items, &p),
         Iter::Page { data, before, after } => Ok(page(vec![fold_values(f, ctx, &data, &p)?], before, after)),
         Iter::Set(s) => {
-            let items = super::sets::materialize(ctx, &s, &p)?;
+            let items = B::materialize(ctx, &s, &p)?;
             fold_values(f, ctx, &items, &p)
         }
     }
 }
 
-fn fold_values(f: Fold, ctx: &Ctx, items: &[Value], p: &Position) -> R<Value> {
+fn fold_values<B: Backend>(f: Fold, ctx: &Ctx<B>, items: &[Value], p: &Position) -> R<Value> {
     match f {
         Fold::Count => Ok(Value::Long(items.len() as i64)),
         Fold::Sum | Fold::Mean => {
@@ -389,7 +391,7 @@ fn fold_values(f: Fold, ctx: &Ctx, items: &[Value], p: &Position) -> R<Value> {
 
 // ---- prepend / append / take / drop ----
 
-fn prepend_append(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn prepend_append<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let elems = args.eval(ctx, env, key, pos)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
     let coll = cast::array(&coll, &pos.key("collection"))?;
@@ -421,7 +423,7 @@ fn split_at(len: usize, n: i64) -> usize {
     n.clamp(0, len as i64) as usize
 }
 
-fn take(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn take<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let nv = args.eval(ctx, env, "take", pos)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
     let n = to_int(cast::long(&nv, &pos.key("take"))?);
@@ -443,7 +445,7 @@ fn take(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     }
 }
 
-fn drop(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn drop<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let nv = args.eval(ctx, env, "drop", pos)?;
     let coll = args.eval(ctx, env, "collection", pos)?;
     let n = to_int(cast::long(&nv, &pos.key("drop"))?);
@@ -467,17 +469,17 @@ fn drop(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 
 // ---- is_empty / reverse / first / last ----
 
-fn is_empty(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn is_empty<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let empty = match iterable(ctx, v, &pos.key(key))? {
         Iter::Array(items) => items.is_empty(),
         Iter::Page { data, .. } => data.is_empty(),
-        Iter::Set(s) => super::sets::materialize(ctx, &s, pos)?.is_empty(),
+        Iter::Set(s) => B::materialize(ctx, &s, pos)?.is_empty(),
     };
     Ok(Value::Bool(if key == "is_empty" { empty } else { !empty }))
 }
 
-fn reverse(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn reverse<B: Backend>(ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, "reverse", pos)?;
     match iterable(ctx, v, &pos.key("reverse"))? {
         Iter::Array(mut items) => {
@@ -493,7 +495,7 @@ fn reverse(ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
 }
 
 /// `First`/`Last` (`Casts.SetOrArray`): a Page is rejected.
-fn first_last(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) -> R<Value> {
+fn first_last<B: Backend>(key: &str, ctx: &mut Ctx<B>, env: &Env, args: &Args, pos: &Position) -> R<Value> {
     let v = args.eval(ctx, env, key, pos)?;
     let p = pos.key(key);
     let pick = |mut items: Vec<Value>| if key == "first" { items.swap_remove(0) } else { items.pop().unwrap() };
@@ -502,7 +504,7 @@ fn first_last(key: &str, ctx: &mut Ctx, env: &Env, args: &Args, pos: &Position) 
         Iter::Array(items) => Ok(pick(items)),
         Iter::Page { .. } => one(FaunaError::invalid_argument(&[Type::Set, Type::Array], Type::Page, &p)),
         Iter::Set(s) => {
-            let items = super::sets::materialize(ctx, &s, pos)?;
+            let items = B::materialize(ctx, &s, pos)?;
             if items.is_empty() {
                 one(FaunaError::empty_set_argument(&p))
             } else {
